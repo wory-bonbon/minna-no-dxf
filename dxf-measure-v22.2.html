@@ -1,0 +1,2350 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DXF 計測ツール（スタンドアロン版）</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* カスタムスタイル */
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden; /* 全体のスクロールを無効化 */
+        }
+        #root {
+            height: 100vh;
+            overflow: hidden;
+        }
+        .sidebar-scroll::-webkit-scrollbar { width: 6px; }
+        .sidebar-scroll::-webkit-scrollbar-track { background: #1e293b; }
+        .sidebar-scroll::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- Preact (軽量) -->
+    <script crossorigin src="https://unpkg.com/preact@10.20.2/dist/preact.umd.js"></script>
+    <script crossorigin src="https://unpkg.com/preact@10.20.2/hooks/dist/hooks.umd.js"></script>
+    <script crossorigin src="https://unpkg.com/preact@10.20.2/compat/dist/compat.umd.js"></script>
+    <script>
+      // 互換エイリアス: 既存コードは React/ReactDOM を参照
+      // preact/compat を React/ReactDOM 双方に割当て（hooks/DOM互換を提供）
+      window.React = preactCompat;
+      window.ReactDOM = preactCompat;
+      // React 18 createRoot シム（compatに存在しない環境向け安全策）
+      if (!window.ReactDOM.createRoot) {
+        window.ReactDOM.createRoot = function(container) {
+          return {
+            render: function(vnode) { preact.render(vnode, container); },
+            unmount: function() { preact.render(null, container); }
+          };
+        };
+      }
+    </script>
+
+    <script type="text/javascript">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        // 型定義は削除（JavaScriptとして実行）
+        
+        // ユーティリティ関数
+        function useFileText() {
+            const [text, setText] = useState(null);
+            const pickFile = (f) => {
+                const tryDecode = async () => {
+                    const buf = await f.arrayBuffer();
+                    const d = new Uint8Array(buf);
+                    const encoders = ["shift_jis", "ms932", "utf-8"];
+                    for (const enc of encoders) {
+                        try {
+                            const td = new TextDecoder(enc, { fatal: false });
+                            const s = td.decode(d);
+                            if (s.includes("SECTION") && s.includes("ENTITIES")) {
+                                setText(s);
+                                return;
+                            }
+                        } catch (_) {}
+                    }
+                    setText(new TextDecoder().decode(d));
+                };
+                tryDecode();
+            };
+            return { text, pickFile };
+        }
+
+        // 2D 基本処理
+        function rad(deg) { return (deg * Math.PI) / 180; }
+        function rotateAround(p, pivot, deg) {
+            if (deg % 360 === 0) return { ...p };
+            const th = rad(deg);
+            const s = Math.sin(th), c = Math.cos(th);
+            const x = p.x - pivot.x, y = p.y - pivot.y;
+            return { x: pivot.x + x * c - y * s, y: pivot.y + x * s + y * c };
+        }
+        function rotateVec(v, deg) {
+            if (deg % 360 === 0) return { ...v };
+            const th = rad(deg); 
+            const c = Math.cos(th), s = Math.sin(th);
+            return { x: v.x * c - v.y * s, y: v.x * s + v.y * c };
+        }
+        function transformPoint(p, base, insert, sx, sy, angDeg) {
+            const dx = (p.x - base.x) * sx;
+            const dy = (p.y - base.y) * sy;
+            const th = rad(angDeg);
+            const cx = Math.cos(th), sn = Math.sin(th);
+            return { x: insert.x + (dx * cx - dy * sn), y: insert.y + (dx * sn + dy * cx) };
+        }
+
+        // フィット計算
+        function computeFitFromPoints(points, pivot, deg, canvasW, canvasH) {
+            if (!points.length) return { s: 1, tx: 0, ty: 0, bounds: null };
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const p of points) {
+                const r = rotateAround(p, pivot, deg);
+                if (r.x < minX) minX = r.x;
+                if (r.y < minY) minY = r.y;
+                if (r.x > maxX) maxX = r.x;
+                if (r.y > maxY) maxY = r.y;
+            }
+            const w = Math.max(1e-9, maxX - minX);
+            const h = Math.max(1e-9, maxY - minY);
+            const sx = (canvasW - 80) / w;
+            const sy = (canvasH - 80) / h;
+            const s = Math.min(sx, sy);
+            const left = (canvasW - w * s) / 2;
+            const top = (canvasH - h * s) / 2;
+            const tx = left - minX * s;
+            const ty = canvasH - top - maxY * s;
+            return { s, tx, ty, bounds: { minX, minY, maxX, maxY } };
+        }
+
+        function buildSegments(polys) {
+            const segs = [];
+            polys.forEach((pl, idx) => {
+                for (let i = 0; i < pl.points.length - 1; i++) {
+                    segs.push({ a: pl.points[i], b: pl.points[i + 1], polyIndex: idx, segIndex: i });
+                }
+                if (pl.closed && pl.points.length > 1) {
+                    segs.push({ a: pl.points[pl.points.length - 1], b: pl.points[0], polyIndex: idx, segIndex: pl.points.length - 1 });
+                }
+            });
+            return segs;
+        }
+
+        function parseDXF(dxf) {
+            const lines = dxf.split(/\r\n|[\r\n]/);
+            const pairs = [];
+            for (let i = 0; i < lines.length - 1; i += 2) {
+                pairs.push({ code: lines[i].trim(), value: (lines[i + 1] ?? "").trim() });
+            }
+
+            const blocks = new Map();
+            const worldPolys = [];
+            const worldTexts = [];
+            const header = { tdcreate: null, tdupdate: null };
+
+            let i = 0;
+            let curBlock = null;
+
+            const pushLwpoly = (pts, closed) => {
+                (curBlock ? curBlock.polys : worldPolys).push({ points: pts, closed });
+            };
+            const pushPolylineSeq = (seq, closed) => {
+                (curBlock ? curBlock.polys : worldPolys).push({ points: seq, closed });
+            };
+            const pushLine = (a, b) => {
+                (curBlock ? curBlock.polys : worldPolys).push({ points: [a, b], closed: false });
+            };
+            const pushText = (pt, text) => {
+                if (curBlock) curBlock.texts.push({ pt, text });
+                else worldTexts.push({ pt, text });
+            };
+
+            while (i < pairs.length) {
+                const p = pairs[i];
+                // HEADER: $TDCREATE / $TDUPDATE を拾う（簡易）
+                if (p.code === "9" && (p.value === "$TDCREATE" || p.value === "$TDUPDATE")) {
+                    // 直後に来る数値(40)を採用
+                    for (let j = i + 1; j < pairs.length; j++) {
+                        const c = pairs[j].code, v = pairs[j].value;
+                        if (c === "40") {
+                            if (p.value === "$TDCREATE") header.tdcreate = v;
+                            else header.tdupdate = v;
+                            i = j; // 少し進める
+                            break;
+                        }
+                        if (c === "9" || c === "0") break; // 次の変数/セクションへ
+                    }
+                    i++;
+                    continue;
+                }
+                
+                // BLOCK処理
+                if (p.code === "0" && p.value === "BLOCK") {
+                    let name = "";
+                    let baseX = 0, baseY = 0;
+                    for (let j = i + 1; j < pairs.length; j++) {
+                        const c = pairs[j].code, v = pairs[j].value;
+                        if (c === "2") name = v;
+                        if (c === "10") baseX = parseFloat(v);
+                        if (c === "20") baseY = parseFloat(v);
+                        if (c === "0") { i = j - 1; break; }
+                    }
+                    curBlock = { name, base: { x: baseX, y: baseY }, polys: [], texts: [] };
+                    
+                    for (let j = i + 1; j < pairs.length; j++) {
+                        const c0 = pairs[j].code, v0 = pairs[j].value;
+                        if (c0 === "0" && v0 === "ENDBLK") {
+                            blocks.set(curBlock.name, curBlock);
+                            curBlock = null;
+                            i = j;
+                            break;
+                        }
+                        
+                        if (c0 === "0" && v0 === "LWPOLYLINE") {
+                            const pts = [];
+                            let closed = false;
+                            for (let k = j + 1; k < pairs.length; k++) {
+                                const c = pairs[k].code, v = pairs[k].value;
+                                if (c === "10") {
+                                    const x = parseFloat(v);
+                                    const y = parseFloat(pairs[k + 1]?.value ?? "0");
+                                    k++;
+                                    pts.push({ x, y });
+                                }
+                                if (c === "70") {
+                                    const flag = parseInt(v, 10);
+                                    closed = (flag & 1) === 1;
+                                }
+                                if (c === "0") { j = k - 1; break; }
+                            }
+                            pushLwpoly(pts, closed);
+                        } else if (c0 === "0" && v0 === "POLYLINE") {
+                            const pts = [];
+                            let closed = false;
+                            for (let k = j + 1; k < pairs.length; k++) {
+                                const c = pairs[k].code, v = pairs[k].value;
+                                if (c === "70") {
+                                    const flag = parseInt(v, 10);
+                                    closed = (flag & 1) === 1;
+                                }
+                                if (c === "0" && pairs[k].value === "VERTEX") {
+                                    let vx = 0, vy = 0;
+                                    for (let m = k + 1; m < pairs.length; m++) {
+                                        const cc = pairs[m].code, vv = pairs[m].value;
+                                        if (cc === "10") vx = parseFloat(vv);
+                                        if (cc === "20") vy = parseFloat(vv);
+                                        if (cc === "0") {
+                                            k = m - 1;
+                                            pts.push({ x: vx, y: vy });
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (c === "0" && v === "SEQEND") { j = k; break; }
+                            }
+                            pushPolylineSeq(pts, closed);
+                        } else if (c0 === "0" && v0 === "LINE") {
+                            let x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+                            for (let k = j + 1; k < pairs.length; k++) {
+                                const c = pairs[k].code, v = pairs[k].value;
+                                if (c === "10") x1 = parseFloat(v);
+                                if (c === "20") y1 = parseFloat(v);
+                                if (c === "11") x2 = parseFloat(v);
+                                if (c === "21") y2 = parseFloat(v);
+                                if (c === "0") { j = k - 1; break; }
+                            }
+                            pushLine({ x: x1, y: y1 }, { x: x2, y: y2 });
+                        } else if (c0 === "0" && (v0 === "TEXT" || v0 === "MTEXT")) {
+                            let tx = 0, ty = 0;
+                            let text = "";
+                            for (let k = j + 1; k < pairs.length; k++) {
+                                const c = pairs[k].code, v = pairs[k].value;
+                                if (c === "10") tx = parseFloat(v);
+                                if (c === "20") ty = parseFloat(v);
+                                if (c === "1") text += v;
+                                if (c === "0") { j = k - 1; break; }
+                            }
+                            if (text.trim()) pushText({ x: tx, y: ty }, text);
+                        }
+                    }
+                    i++;
+                    continue;
+                }
+
+                // ENTITIES直下のエンティティ処理
+                if (p.code === "0" && p.value === "LWPOLYLINE") {
+                    const pts = [];
+                    let closed = false;
+                    for (let j = i + 1; j < pairs.length; j++) {
+                        const c = pairs[j].code, v = pairs[j].value;
+                        if (c === "10") {
+                            const x = parseFloat(v);
+                            const y = parseFloat(pairs[j + 1]?.value ?? "0");
+                            j++;
+                            pts.push({ x, y });
+                        }
+                        if (c === "70") {
+                            const flag = parseInt(v, 10);
+                            closed = (flag & 1) === 1;
+                        }
+                        if (c === "0") { i = j - 1; break; }
+                    }
+                    pushLwpoly(pts, closed);
+                    i++;
+                    continue;
+                }
+                
+                if (p.code === "0" && p.value === "POLYLINE") {
+                    const pts = [];
+                    let closed = false;
+                    for (let j = i + 1; j < pairs.length; j++) {
+                        const c = pairs[j].code, v = pairs[j].value;
+                        if (c === "70") {
+                            const flag = parseInt(v, 10);
+                            closed = (flag & 1) === 1;
+                        }
+                        if (c === "0" && pairs[j].value === "VERTEX") {
+                            let vx = 0, vy = 0;
+                            for (let k = j + 1; k < pairs.length; k++) {
+                                const cc = pairs[k].code, vv = pairs[k].value;
+                                if (cc === "10") vx = parseFloat(vv);
+                                if (cc === "20") vy = parseFloat(vv);
+                                if (cc === "0") {
+                                    j = k - 1;
+                                    pts.push({ x: vx, y: vy });
+                                    break;
+                                }
+                            }
+                        }
+                        if (c === "0" && v === "SEQEND") { i = j; break; }
+                    }
+                    pushPolylineSeq(pts, closed);
+                    i++;
+                    continue;
+                }
+                
+                if (p.code === "0" && p.value === "LINE") {
+                    let x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+                    for (let j = i + 1; j < pairs.length; j++) {
+                        const c = pairs[j].code, v = pairs[j].value;
+                        if (c === "10") x1 = parseFloat(v);
+                        if (c === "20") y1 = parseFloat(v);
+                        if (c === "11") x2 = parseFloat(v);
+                        if (c === "21") y2 = parseFloat(v);
+                        if (c === "0") { i = j - 1; break; }
+                    }
+                    pushLine({ x: x1, y: y1 }, { x: x2, y: y2 });
+                    i++;
+                    continue;
+                }
+                
+                if (p.code === "0" && (p.value === "TEXT" || p.value === "MTEXT")) {
+                    let tx = 0, ty = 0;
+                    let textVal = "";
+                    for (let j = i + 1; j < pairs.length; j++) {
+                        const c = pairs[j].code, v = pairs[j].value;
+                        if (c === "10") tx = parseFloat(v);
+                        if (c === "20") ty = parseFloat(v);
+                        if (c === "1") textVal += v;
+                        if (c === "0") { i = j - 1; break; }
+                    }
+                    if (textVal.trim()) pushText({ x: tx, y: ty }, textVal);
+                    i++;
+                    continue;
+                }
+
+                // INSERT（ブロック配置）
+                if (p.code === "0" && p.value === "INSERT") {
+                    let name = "";
+                    let ix = 0, iy = 0;
+                    let sx = 1, sy = 1;
+                    let ang = 0;
+                    for (let j = i + 1; j < pairs.length; j++) {
+                        const c = pairs[j].code, v = pairs[j].value;
+                        if (c === "2") name = v;
+                        if (c === "10") ix = parseFloat(v);
+                        if (c === "20") iy = parseFloat(v);
+                        if (c === "41") sx = parseFloat(v) || 1;
+                        if (c === "42") sy = parseFloat(v) || 1;
+                        if (c === "50") ang = parseFloat(v) || 0;
+                        if (c === "0") { i = j - 1; break; }
+                    }
+                    const def = blocks.get(name);
+                    if (def) {
+                        def.polys.forEach((pl) => {
+                            const pts = pl.points.map((p) => transformPoint(p, def.base, { x: ix, y: iy }, sx, sy, ang));
+                            worldPolys.push({ points: pts, closed: pl.closed, name });
+                        });
+                        def.texts.forEach((t) => {
+                            worldTexts.push({ pt: transformPoint(t.pt, def.base, { x: ix, y: iy }, sx, sy, ang), text: `${name}:${t.text}` });
+                        });
+                    }
+                    i++;
+                    continue;
+                }
+
+                i++;
+            }
+
+            // bbox計算
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            worldPolys.forEach((pl) => {
+                pl.points.forEach((p) => {
+                    minX = Math.min(minX, p.x);
+                    minY = Math.min(minY, p.y);
+                    maxX = Math.max(maxX, p.x);
+                    maxY = Math.max(maxY, p.y);
+                });
+            });
+            const bbox = isFinite(minX) ? { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } } : null;
+
+            const blockNames = Array.from(new Set(worldPolys.map((p) => p.name).filter(Boolean)));
+            return { polys: worldPolys, texts: worldTexts, bbox, blockNames, header };
+        }
+
+        function dist(a, b) {
+            return Math.hypot(a.x - b.x, a.y - b.y);
+        }
+        
+        function nearestOnSegment(p, a, b) {
+            const vx = b.x - a.x, vy = b.y - a.y;
+            const wx = p.x - a.x, wy = p.y - a.y;
+            const len2 = vx * vx + vy * vy || 1e-9;
+            let t = (vx * wx + vy * wy) / len2;
+            t = Math.max(0, Math.min(1, t));
+            return { x: a.x + t * vx, y: a.y + t * vy, t };
+        }
+
+        // 直線(レイ)と線分の交差判定（世界座標）
+        // レイ: O + t*D (tは実数)、線分: A + u*(B-A) (0<=u<=1)
+        function intersectRaySegment(O, D, A, B) {
+            // 画面基準の水平/垂直「直線」と、線分ABの厳密な交点を返す
+            const Sx = B.x - A.x, Sy = B.y - A.y;
+            const det = D.x * (-Sy) - D.y * (-Sx);
+            const EPS = 1e-12;
+            if (Math.abs(det) < EPS) return null; // 平行
+            const dx = A.x - O.x, dy = A.y - O.y;
+            const t = (dx * (-Sy) - dy * (-Sx)) / det; // 直線側パラメータ
+            const u = (dx * D.y - dy * D.x) / det;      // 線分側パラメータ（0..1内のみ採用）
+            if (u < 0 || u > 1) return null;
+            // 直線上の交点（水平/垂直が厳密に保たれる）
+            const ptLine = { x: O.x + t * D.x, y: O.y + t * D.y };
+            return { pt: ptLine, u, t };
+        }
+        
+        function cumulativeLengths(poly) {
+            const P = poly.points;
+            const cum = [0];
+            let total = 0;
+            for (let i = 0; i < P.length - 1; i++) {
+                total += dist(P[i], P[i + 1]);
+                cum.push(total);
+            }
+            if (poly.closed && P.length > 1) {
+                total += dist(P[P.length - 1], P[0]);
+                cum.push(total);
+            }
+            return { cum, total };
+        }
+
+        // メインコンポーネント
+        function App() {
+        const { text, pickFile } = useFileText();
+        const [unitScale, setUnitScale] = useState(1);
+        const [showLabels, setShowLabels] = useState(false);
+        const [showGuides, setShowGuides] = useState(true);
+        const [selectedBlock, setSelectedBlock] = useState("ALL");
+
+            // ロック機能
+            const [lockToPoly, setLockToPoly] = useState(true);
+            const [lockedPoly, setLockedPoly] = useState(null);
+
+            // 表示回転
+            const [rot, setRot] = useState(0);
+            const [autoFitOnRotate, setAutoFitOnRotate] = useState(true);
+            const [pivot, setPivot] = useState({ x: 0, y: 0 });
+            const [firstFitDone, setFirstFitDone] = useState(false);
+
+            // 幅/丈の基準
+            const [axisMode, setAxisMode] = useState("VIEW");
+
+            // 図面キー（v17〜: DXF作成時刻 or ハッシュ）
+            const [docKey, setDocKey] = useState(null);
+            const legacyDocKeyRef = useRef(null); // v16までの name:size:lastModified
+            // 計測ログ（図面ごと）。初期は空。
+            const [measureLog, setMeasureLog] = useState([]);
+            const [showLog, setShowLog] = useState(true);
+            // ログの表示モードとパネル状態（永続化）
+            const [logDock, setLogDock] = useState(() => {
+                try { return localStorage.getItem('dxf-log-dock') || 'docked'; } catch { return 'docked'; }
+            });
+            const normRect = (r) => {
+                const W = (typeof window!== 'undefined' ? window.innerWidth : 1200);
+                const H = (typeof window!== 'undefined' ? window.innerHeight : 800);
+                const x = Number.isFinite(+r.x) ? +r.x : Math.max(12, W - 372);
+                const y = Number.isFinite(+r.y) ? +r.y : Math.max(56, H - 300);
+                const w = Number.isFinite(+r.w) ? +r.w : 360;
+                const h = Number.isFinite(+r.h) ? +r.h : 240;
+                return {
+                    x: Math.max(0, Math.min(W - 200, x)),
+                    y: Math.max(0, Math.min(H - 120, y)),
+                    w: Math.max(260, Math.min(W - 24, w)),
+                    h: Math.max(160, Math.min(H - 80, h)),
+                };
+            };
+            const [logRect, setLogRect] = useState(() => {
+                try {
+                    const raw = localStorage.getItem('dxf-log-rect');
+                    if (raw) return normRect(JSON.parse(raw));
+                } catch {}
+                const W = (typeof window!== 'undefined' ? window.innerWidth : 1200);
+                const H = (typeof window!== 'undefined' ? window.innerHeight : 800);
+                return normRect({ x: Math.max(12, W - 372), y: Math.max(56, H - 300), w: 360, h: 240 });
+            });
+            useEffect(() => { try { localStorage.setItem('dxf-log-dock', logDock); } catch {} }, [logDock]);
+            useEffect(() => { try { localStorage.setItem('dxf-log-rect', JSON.stringify(logRect)); } catch {} }, [logRect]);
+
+            // パーツ表示名のマッピング（docごとに永続化）
+            const [nameMap, setNameMap] = useState({}); // { originalName: displayName }
+            const [renameTarget, setRenameTarget] = useState(null); // originalName
+            const [renameValue, setRenameValue] = useState("");
+            const renameInputRef = useRef(null);
+            const displayName = (n) => (n ? (nameMap[n] || n) : "");
+            // 読み込んだDXFのファイル名（表示/CSV用）
+            const [fileName, setFileName] = useState('');
+            useEffect(() => {
+                // ドキュメント切替時に名前マップをロード
+                if (!docKey) { setNameMap({}); return; }
+                try {
+                    const raw = localStorage.getItem('dxf-name-map:' + docKey);
+                    setNameMap(raw ? JSON.parse(raw) : {});
+                } catch { setNameMap({}); }
+            }, [docKey]);
+            useEffect(() => {
+                if (!docKey) return;
+                try { localStorage.setItem('dxf-name-map:' + docKey, JSON.stringify(nameMap)); } catch {}
+            }, [docKey, nameMap]);
+
+            // パーツ（ブロック）ごとの回転角（度）を保持（docごとに永続化）
+            const [blockRot, setBlockRot] = useState({}); // { blockName: deg }
+            const getBlockRot = (n) => (n ? (blockRot[n] || 0) : 0);
+            useEffect(() => {
+                if (!docKey) { setBlockRot({}); return; }
+                try {
+                    const raw = localStorage.getItem('dxf-block-rot:' + docKey);
+                    setBlockRot(raw ? JSON.parse(raw) : {});
+                } catch { setBlockRot({}); }
+            }, [docKey]);
+            useEffect(() => {
+                if (!docKey) return;
+                try { localStorage.setItem('dxf-block-rot:' + docKey, JSON.stringify(blockRot)); } catch {}
+            }, [docKey, blockRot]);
+
+            // docKey計算（HEADERの$TDCREATE優先、無ければ内容SHA-256）＋移行
+            async function computeDocKeyFrom(text, parsed) {
+                if (parsed?.header?.tdcreate) return `dxf:create:${parsed.header.tdcreate}`;
+                // Fallback: SHA-256 of content
+                try {
+                    const enc = new TextEncoder();
+                    const data = enc.encode(text||'');
+                    if (crypto && crypto.subtle && crypto.subtle.digest) {
+                        const buf = await crypto.subtle.digest('SHA-256', data);
+                        const b = Array.from(new Uint8Array(buf));
+                        const hex = b.map(x=>x.toString(16).padStart(2,'0')).join('');
+                        return `dxf:hash:${hex.slice(0,16)}`;
+                    }
+                } catch {}
+                // Last resort: simple hash
+                let h = 0; const s = text||''; for (let i=0;i<s.length;i++){ h = (h*31 + s.charCodeAt(i))|0; }
+                return `dxf:hash:simple:${(h>>>0).toString(16)}`;
+            }
+            const beginRename = (orig) => {
+                if (!orig || orig === 'ALL') return;
+                setRenameTarget(orig);
+                setRenameValue(displayName(orig));
+                setTimeout(() => { try { renameInputRef.current?.focus(); renameInputRef.current?.select(); } catch {} }, 0);
+            };
+            const commitRename = () => {
+                if (!renameTarget) return;
+                const nv = (renameValue||"").trim();
+                if (nv && nv !== displayName(renameTarget)) {
+                    setNameMap((prev) => ({ ...prev, [renameTarget]: nv }));
+                }
+                setRenameTarget(null);
+            };
+            const cancelRename = () => { setRenameTarget(null); };
+
+            // フォーカス外クリックでリネームを確定（入力がフォーカスを奪って他操作を妨げないように）
+            useEffect(() => {
+                if (!renameTarget) return;
+                const onDown = (e) => {
+                    const el = renameInputRef.current;
+                    if (!el) return;
+                    // クリックターゲットが入力自身/子孫なら何もしない
+                    if (e.target === el || (e.target && typeof e.target.closest === 'function' && e.target.closest('input') === el) || (el.contains && el.contains(e.target))) return;
+                    // フローティングログ（POPUP）内のクリックでは確定しない（入力が閉じないように）
+                    const panel = floatingContainerRef?.current;
+                    if (panel && panel.contains && panel.contains(e.target)) return;
+                    commitRename();
+                };
+                document.addEventListener('mousedown', onDown, true); // captureで早期に確定
+                return () => document.removeEventListener('mousedown', onDown, true);
+            }, [renameTarget, renameValue]);
+            const floatingDrag = useRef(null); // {dx, dy}
+            const floatingContainerRef = useRef(null); // フローティングログのコンテナ参照
+            const floatingResize = useRef(null); // {startX, startY, startW, startH}
+            useEffect(() => {
+                const onMove = (e) => {
+                    if (floatingDrag.current) {
+                        setLogRect((r) => {
+                            const nx = e.clientX - floatingDrag.current.dx;
+                            const ny = e.clientY - floatingDrag.current.dy;
+                            const maxX = (typeof window!== 'undefined' ? window.innerWidth : 2000) - (Number.isFinite(r.w)? r.w: 360);
+                            const maxY = (typeof window!== 'undefined' ? window.innerHeight : 2000) - (Number.isFinite(r.h)? r.h: 240);
+                            return normRect({ ...r, x: Math.max(0, Math.min(maxX, nx)), y: Math.max(0, Math.min(maxY, ny)) });
+                        });
+                    }
+                    if (floatingResize.current) {
+                        const { startX, startY, startW, startH, mode } = floatingResize.current;
+                        const dX = e.clientX - startX;
+                        const dY = e.clientY - startY;
+                        setLogRect((r) => {
+                            const x = Number.isFinite(r.x) ? r.x : 0;
+                            const y = Number.isFinite(r.y) ? r.y : 0;
+                            const maxW = (typeof window!== 'undefined' ? window.innerWidth : 2000) - x;
+                            const maxH = (typeof window!== 'undefined' ? window.innerHeight : 2000) - y;
+                            if (mode === 'y') {
+                                return normRect({ ...r, h: Math.max(160, Math.min(maxH, startH + dY)) });
+                            }
+                            return normRect({ ...r, w: Math.max(260, Math.min(maxW, startW + dX)), h: Math.max(160, Math.min(maxH, startH + dY)) });
+                        });
+                    }
+                };
+                const onUp = () => { floatingDrag.current = null; floatingResize.current = null; };
+                window.addEventListener('mousemove', onMove);
+                window.addEventListener('mouseup', onUp);
+                return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+            }, []);
+
+            // ビューポートリサイズで位置・サイズを常に画面内にクランプ
+            useEffect(() => {
+                const onResize = () => {
+                    setLogRect((r) => normRect(r));
+                };
+                window.addEventListener('resize', onResize);
+                return () => window.removeEventListener('resize', onResize);
+            }, []);
+
+            // ドック⇄フロート切替時にも一度クランプ
+            useEffect(() => {
+                if (logDock === 'floating') setLogRect((r) => normRect(r));
+            }, [logDock]);
+            // A点でShiftを押したらB点を水平/垂直に制約させるフラグ
+            const [constrainFromA, setConstrainFromA] = useState(false);
+            const [abConstrained, setAbConstrained] = useState(false); // Shift制約で確定したA-Bか
+            const [showAccuracyTag, setShowAccuracyTag] = useState(false); // 精度タグ表示
+            // 状態に応じてキャンバスのカーソルを変更
+            const [cursor, setCursor] = useState('crosshair');
+            const [isDragging, setIsDragging] = useState(false);
+            const [constraintDir, setConstraintDir] = useState(null); // 'H' | 'V' | null
+            // 最新のビュー/回転/ピボットを参照するための参照（イベントリスナーを安定化）
+            // 定義位置は view/pivot/rot の宣言以降へ移動（TDZ回避のためここでは宣言しない）
+            
+            // ログの保存は図面キー単位（デバウンスしてタイプ中の固まりを防止）
+            const saveLogTimer = useRef(null);
+            useEffect(() => {
+                if (!docKey) return;
+                if (saveLogTimer.current) clearTimeout(saveLogTimer.current);
+                saveLogTimer.current = setTimeout(() => {
+                    try { localStorage.setItem(`dxf-measure-log:${docKey}`, JSON.stringify(measureLog)); } catch {}
+                }, 300);
+                return () => { if (saveLogTimer.current) { clearTimeout(saveLogTimer.current); saveLogTimer.current = null; } };
+            }, [measureLog, docKey]);
+            // 図面切替時にログを自動クリア
+            useEffect(() => { setMeasureLog([]); }, [docKey]);
+
+            const parsed = useMemo(() => (text ? parseDXF(text) : null), [text]);
+            // v17: DXF作成時刻 or 内容ハッシュでdocKeyを生成。旧キーからの移行も行う
+            useEffect(() => {
+                let cancelled = false;
+                (async () => {
+                    if (!text) { setDocKey(null); return; }
+                    const newKey = await computeDocKeyFrom(text, parsed);
+                    if (cancelled) return;
+                    // 旧キー→新キーへ name-map を移行（新キー未設定のときのみ）
+                    try {
+                        const legacy = legacyDocKeyRef.current;
+                        if (legacy) {
+                            const oldK = 'dxf-name-map:' + legacy;
+                            const newK = 'dxf-name-map:' + newKey;
+                            const oldRaw = localStorage.getItem(oldK);
+                            const newRaw = localStorage.getItem(newK);
+                            if (oldRaw && !newRaw) localStorage.setItem(newK, oldRaw);
+                        }
+                    } catch {}
+                    setDocKey(newKey);
+                })();
+                return () => { cancelled = true; };
+            }, [text, parsed]);
+            const polysAll = parsed?.polys ?? [];
+            const labelsAll = parsed?.texts ?? [];
+            const bbox = parsed?.bbox ?? null;
+            const blockNames = parsed?.blockNames ?? [];
+
+            // ブロックごとの回転の基準点（各ブロックのバウンディングボックス中心）
+            const blockPivots = useMemo(() => {
+                const by = new Map();
+                polysAll.forEach(pl => {
+                    const n = pl.name;
+                    if (!n) return;
+                    let m = by.get(n);
+                    if (!m) { m = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }; by.set(n, m); }
+                    pl.points.forEach(p => { if (p.x < m.minX) m.minX = p.x; if (p.y < m.minY) m.minY = p.y; if (p.x > m.maxX) m.maxX = p.x; if (p.y > m.maxY) m.maxY = p.y; });
+                });
+                const piv = {};
+                by.forEach((m, n) => { if (isFinite(m.minX)) piv[n] = { x: (m.minX + m.maxX) / 2, y: (m.minY + m.maxY) / 2 }; });
+                return piv;
+            }, [polysAll]);
+
+            // 回転反映後のポリライン群（計測・描画ともに使用）
+            const polysEffective = useMemo(() => {
+                if (!polysAll.length) return polysAll;
+                const out = polysAll.map(pl => {
+                    const n = pl.name;
+                    const deg = n ? (blockRot[n] || 0) : 0;
+                    if (!deg) return pl;
+                    const pv = blockPivots[n];
+                    if (!pv) return pl;
+                    return { ...pl, points: pl.points.map(p => rotateAround(p, pv, deg)) };
+                });
+                return out;
+            }, [polysAll, blockRot, blockPivots]);
+
+            const visiblePolys = useMemo(() => {
+                if (selectedBlock === "ALL") return polysEffective;
+                return polysEffective.filter((p) => p.name === selectedBlock);
+            }, [polysEffective, selectedBlock]);
+
+            const segments = useMemo(() => buildSegments(visiblePolys), [visiblePolys]);
+
+            // キャンバス
+            const canvasRef = useRef(null);
+            const [view, setView] = useState({ scale: 1, tx: 0, ty: 0 });
+            const dragging = useRef(null);
+
+            // ビューポート/ズーム変化でキャンバスの再描画を促す（アスペクト一時ズレの解消）
+            const [viewportTick, setViewportTick] = useState(0);
+            useEffect(() => {
+                const onResize = () => setViewportTick((t) => t + 1);
+                window.addEventListener('resize', onResize);
+                const vv = (typeof window !== 'undefined' ? window.visualViewport : null);
+                if (vv && vv.addEventListener) vv.addEventListener('resize', onResize);
+                return () => {
+                    window.removeEventListener('resize', onResize);
+                    if (vv && vv.removeEventListener) vv.removeEventListener('resize', onResize);
+                };
+            }, []);
+
+            // キャンバスサイズの変化時に、画面中心のワールド座標を保ったまま平行移動を補正する
+            const canvasSizeRef = useRef({ w: 0, h: 0 });
+            useEffect(() => {
+                const c = canvasRef.current;
+                if (c) canvasSizeRef.current = { w: c.clientWidth, h: c.clientHeight };
+            }, []);
+            useEffect(() => {
+                const c = canvasRef.current;
+                if (!c) return;
+                const W1 = c.clientWidth, H1 = c.clientHeight;
+                const prev = canvasSizeRef.current || { w: 0, h: 0 };
+                if ((prev.w === 0 && prev.h === 0) || (prev.w === W1 && prev.h === H1)) return;
+                const v = viewRef.current; const pv = pivotRef.current; const r = rotRef.current;
+                // 旧サイズのキャンバス中心に相当するワールド座標
+                const cx0 = prev.w / 2, cy0 = prev.h / 2;
+                const rx0 = (cx0 - v.tx) / Math.max(1e-9, v.scale);
+                const ry0 = ((prev.h - cy0) - v.ty) / Math.max(1e-9, v.scale);
+                const worldAtCenter = rotateAround({ x: rx0, y: ry0 }, pv, -r);
+                // 新サイズで中心に同じワールド座標が来るように tx,ty を再計算
+                const cx1 = W1 / 2, cy1 = H1 / 2;
+                const rAnchor = rotateAround(worldAtCenter, pv, r);
+                const newTx = cx1 - rAnchor.x * v.scale;
+                const newTy = (H1 - cy1) - rAnchor.y * v.scale;
+                canvasSizeRef.current = { w: W1, h: H1 };
+                setView((old) => ({ ...old, tx: newTx, ty: newTy }));
+            }, [viewportTick]);
+
+            // 最新のビュー/回転/ピボットを参照するための参照（イベントリスナーを安定化）
+            const viewRef = useRef({ scale: 1, tx: 0, ty: 0 });
+            useEffect(() => { viewRef.current = view; }, [view]);
+            const pivotRef = useRef({ x: 0, y: 0 });
+            useEffect(() => { pivotRef.current = pivot; }, [pivot]);
+            const rotRef = useRef(0);
+            useEffect(() => { rotRef.current = rot; }, [rot]);
+
+            // 選択点
+            const [A, setA] = useState(null);
+            const [B, setB] = useState(null);
+
+            // タグ（①/②/③）ドラッグ用の状態（A/B定義後に配置：TDZ回避）
+            const [tagOffset, setTagOffset] = useState({ t1:{dx:0,dy:0}, t2:{dx:0,dy:0}, t3:{dx:0,dy:0} });
+            const tagRectsRef = useRef({ t1:null, t2:null, t3:null });
+            const tagDragRef = useRef(null); // {key,startX,startY,ox,oy}
+            const tagClickGuardRef = useRef(false); // タグ操作時のクリック抑止
+            useEffect(()=>{ tagRectsRef.current={ t1:null,t2:null,t3:null }; setTagOffset({ t1:{dx:0,dy:0}, t2:{dx:0,dy:0}, t3:{dx:0,dy:0} }); }, [A,B]);
+
+            // DXF読み込み時にpivotを更新
+            useEffect(() => {
+                if (bbox) {
+                    const cx = (bbox.min.x + bbox.max.x) / 2;
+                    const cy = (bbox.min.y + bbox.max.y) / 2;
+                    setPivot({ x: cx, y: cy });
+                    setFirstFitDone(false);
+                }
+            }, [bbox]);
+
+            // フィット処理
+            const fitToCanvas = (deg, canvasW, canvasH, target = "ALL") => {
+                const pts = [];
+                if (target === "LOCKED" && lockedPoly != null && visiblePolys[lockedPoly]) {
+                    pts.push(...visiblePolys[lockedPoly].points);
+                } else {
+                    visiblePolys.forEach(pl => { pts.push(...pl.points); });
+                }
+                if (pts.length === 0) return;
+                // フィット用のピボットをデータ中心に設定して一貫性を確保
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                for (const p of pts) { if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y; if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y; }
+                const pv = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+                const f = computeFitFromPoints(pts, pv, deg, canvasW, canvasH);
+                setPivot(pv);
+                setView({ scale: f.s, tx: f.tx, ty: f.ty });
+            };
+
+            // 初回フィット & 回転時の自動フィット
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                if (!firstFitDone && bbox && polysAll.length > 0) {
+                    fitToCanvas(rot, canvas.clientWidth, canvas.clientHeight, "ALL");
+                    setFirstFitDone(true);
+                    return;
+                }
+                if (autoFitOnRotate) {
+                    fitToCanvas(rot, canvas.clientWidth, canvas.clientHeight, "ALL");
+                }
+            }, [rot, bbox, polysAll.length, selectedBlock]);
+
+            useEffect(() => {
+                setA(null);
+                setB(null);
+                setLockedPoly(null);
+            }, [selectedBlock]);
+
+            // 描画
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                const ctx = canvas.getContext("2d");
+                const W = canvas.clientWidth, H = canvas.clientHeight;
+                canvas.width = W;
+                canvas.height = H;
+                ctx.clearRect(0, 0, W, H);
+
+                function wc(p) {
+                    const r = rotateAround(p, pivot, rot);
+                    return { x: r.x * view.scale + view.tx, y: H - (r.y * view.scale + view.ty) };
+                }
+
+                // 背景
+                ctx.fillStyle = "#0b1220";
+                ctx.fillRect(0, 0, W, H);
+
+                // グリッド
+                ctx.strokeStyle = "rgba(255,255,255,0.06)";
+                ctx.lineWidth = 1;
+                const grid = 100 * view.scale;
+                if (grid > 8) {
+                    ctx.beginPath();
+                    for (let gx = view.tx % grid; gx < W; gx += grid) {
+                        ctx.moveTo(gx, 0);
+                        ctx.lineTo(gx, H);
+                    }
+                    for (let gy = view.ty % grid; gy < H; gy += grid) {
+                        ctx.moveTo(0, gy);
+                        ctx.lineTo(W, gy);
+                    }
+                    ctx.stroke();
+                }
+
+                // ポリライン描画
+                const Colors = ["#0ea5e9", "#22c55e", "#f97316", "#a855f7", "#ef4444", "#14b8a6", "#eab308"];
+                visiblePolys.forEach((pl, idx) => {
+                    ctx.strokeStyle = Colors[idx % Colors.length];
+                    ctx.lineWidth = lockedPoly === idx ? 4 : 2;
+                    ctx.globalAlpha = lockedPoly === null || lockedPoly === idx ? 1 : 0.35;
+                    ctx.beginPath();
+                    pl.points.forEach((p, i) => {
+                        const c = wc(p);
+                        if (i === 0) ctx.moveTo(c.x, c.y);
+                        else ctx.lineTo(c.x, c.y);
+                    });
+                    if (pl.closed && pl.points.length > 1) {
+                        const c0 = wc(pl.points[0]);
+                        ctx.lineTo(c0.x, c0.y);
+                    }
+                    ctx.stroke();
+                    ctx.globalAlpha = 1;
+                });
+
+                // ラベル
+                if (showLabels) {
+                    ctx.fillStyle = "rgba(255,255,255,0.75)";
+                    ctx.font = "12px ui-sans-serif, system-ui";
+                    labelsAll.forEach((lab) => {
+                        const c = wc(lab.pt);
+                        ctx.fillText(lab.text, c.x + 4, c.y - 4);
+                    });
+                }
+            }, [polysAll, labelsAll, view, visiblePolys, showLabels, lockedPoly, rot, pivot, viewportTick, tagOffset]);
+
+            // マウスイベント処理
+            function canvasToWorld(e) {
+                const canvas = canvasRef.current;
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                const H = canvas.height;
+                const rx = (x - view.tx) / view.scale;
+                const ry = ((H - y) - view.ty) / view.scale;
+                const r = rotateAround({ x: rx, y: ry }, pivot, -rot);
+                return r;
+            }
+
+            const pushMeasureLog = (a, b) => {
+                if (!a || !b) return;
+                const APT = a.pt, BPT = b.pt;
+                const straight = dist(APT, BPT) * unitScale;
+                const raw = { x: BPT.x - APT.x, y: BPT.y - APT.y };
+                const dv = axisMode === "VIEW" ? rotateVec(raw, rot) : raw;
+                const width = Math.abs(dv.x) * unitScale;
+                const length = Math.abs(dv.y) * unitScale;
+                
+                let along = null;
+                if (a.poly === b.poly && visiblePolys[a.poly]) {
+                    const poly = visiblePolys[a.poly];
+                    const { cum, total } = cumulativeLengths(poly);
+                    const P = poly.points;
+                    const segLen = (i) => dist(P[i], i === P.length - 1 ? (poly.closed ? P[0] : P[i + 1]) : P[i + 1]);
+                    const posOn = (segIdx, t) => cum[segIdx] + segLen(segIdx) * t;
+                    const sA = posOn(a.seg, a.t), sB = posOn(b.seg, b.t);
+                    const d = Math.abs(sB - sA);
+                    along = poly.closed ? Math.min(d, total - d) : d;
+                    along *= unitScale;
+                }
+                const origName = (a.poly != null && visiblePolys[a.poly]?.name) ? visiblePolys[a.poly].name : null;
+                
+                const entry = {
+                    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                    time: Date.now(),
+                    a: { ...APT },
+                    b: { ...BPT },
+                    width,
+                    length,
+                    straight,
+                    along,
+                    origName,
+                    note: "",
+                };
+                setMeasureLog((prev) => [entry, ...prev]);
+            };
+            const updateLogNote = (id, value) => {
+                setMeasureLog((prev) => prev.map(m => m.id === id ? { ...m, note: value } : m));
+            };
+            const deleteLog = (id) => {
+                setMeasureLog((prev) => prev.filter(m => m.id !== id));
+            };
+
+            // CSV書き出し
+            const exportCsv = () => {
+                if (!measureLog.length) return;
+                const header = [
+                    'No', 'Time', 'File', 'Part', 'Note', 'Width', 'Length', 'Straight', 'Along'
+                ];
+                const rows = [header];
+                const toCsvCell = (s) => {
+                    if (s==null) return '';
+                    const str = String(s);
+                    if (/[",\r\n]/.test(str)) return '"' + str.replace(/"/g, '""') + '"';
+                    return str;
+                };
+                const asc = [...measureLog].reverse();
+                for (let idx = 0; idx < asc.length; idx++) {
+                    const m = asc[idx];
+                    const no = idx + 1;
+                    const time = new Date(m.time).toLocaleString();
+                    const file = fileName || '';
+                    const part = m.origName ? (nameMap[m.origName] || m.origName) : (m.partName||'');
+                    const note = m.note || '';
+                    const width = Number.isFinite(m.width) ? m.width.toFixed(2) : '';
+                    const length = Number.isFinite(m.length) ? m.length.toFixed(2) : '';
+                    const straight = Number.isFinite(m.straight) ? m.straight.toFixed(2) : '';
+                    const along = Number.isFinite(m.along) ? m.along.toFixed(2) : '';
+                    rows.push([no, time, file, part, note, width, length, straight, along]);
+                }
+                const csv = rows.map(r => r.map(toCsvCell).join(',')).join('\n');
+                const bom = '\uFEFF';
+                const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                const ts = new Date();
+                const pad = (n)=>String(n).padStart(2,'0');
+                const yy = pad(ts.getFullYear() % 100);
+                const mm = pad(ts.getMonth()+1);
+                const dd = pad(ts.getDate());
+                const hh = pad(ts.getHours());
+                const mi = pad(ts.getMinutes());
+                const baseRaw = (fileName && String(fileName)) || 'mlog';
+                const base = baseRaw.replace(/\.[^.]+$/,'').replace(/[\\/:*?"<>|]+/g,'_').trim() || 'mlog';
+                const fname = `${base}-${yy}${mm}${dd}-${hh}${mi}.csv`;
+                a.href = url; a.download = fname; a.style.display='none';
+                document.body.appendChild(a); a.click();
+                setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 0);
+            };
+
+            // 図形書き出し（SVG）: DXF幾何そのまま（見た目回転＝パーツ回転は反映、画面回転は不反映）
+            const exportSvg = (scope = 'VISIBLE', scaleMode = '1') => {
+                const src = (scope === 'ALL') ? polysEffective : visiblePolys;
+                if (!src || src.length === 0) return;
+                // bounds
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                src.forEach(pl => pl.points.forEach(p => { if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y; if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y; }));
+                if (!isFinite(minX)) return;
+                const sUnit = unitScale; // DXF→出力（mm等）
+                const sMode = (scaleMode === '0.1') ? 0.1 : 1;
+                const s = sUnit * sMode; // 最終スケール
+                const margin = 0; // 余白不要（Illustratorで扱いやすく）
+                const W = (maxX - minX) * s + margin * 2;
+                const H = (maxY - minY) * s + margin * 2;
+                const map = (p) => {
+                    const x = (p.x - minX) * s + margin;
+                    const y = (maxY - p.y) * s + margin; // Y反転
+                    return `${x.toFixed(6)} ${y.toFixed(6)}`;
+                };
+                let paths = '';
+                const strokeW = 0.5 * sMode * sUnit;
+                src.forEach(pl => {
+                    if (!pl.points || pl.points.length === 0) return;
+                    const d = ['M ' + map(pl.points[0])];
+                    for (let i = 1; i < pl.points.length; i++) d.push('L ' + map(pl.points[i]));
+                    if (pl.closed && pl.points.length > 1) d.push('Z');
+                    paths += `<path d="${d.join(' ')}" fill="none" stroke="#000" stroke-width="${strokeW.toFixed(4)}" />\n`;
+                });
+                const svg = `<?xml version="1.0" encoding="UTF-8"?>\n`+
+                    `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 ${W.toFixed(6)} ${H.toFixed(6)}">\n`+
+                    paths + `</svg>`;
+                const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                const baseRaw = (fileName && String(fileName)) || 'dxf';
+                const base = baseRaw.replace(/\.[^.]+$/, '').replace(/[\\/:*?"<>|]+/g, '_') || 'dxf';
+                const suf = (scaleMode === '0.1') ? '-1_10' : '-1_1';
+                a.download = `${base}-export${suf}.svg`;
+                a.href = url; a.style.display = 'none';
+                document.body.appendChild(a); a.click();
+                setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 0);
+            };
+
+            // 図形書き出し（PNG／透過）
+            const exportPng = (scope = 'VISIBLE', scaleMode = '1') => {
+                const src = (scope === 'ALL') ? polysEffective : visiblePolys;
+                if (!src || src.length === 0) return;
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                src.forEach(pl => pl.points.forEach(p => { if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y; if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y; }));
+                if (!isFinite(minX)) return;
+                const sUnit = unitScale;
+                const sMode = (scaleMode === '0.1') ? 0.1 : 1;
+                const s = sUnit * sMode; // 単位→px相当のスケール
+                const q = (sMode === 0.1 || scaleMode === '0.1') ? 4 : 1; // 1:10時は4倍オーバーサンプリング
+                const sCanvas = s * q;
+                const margin = 0;
+                const W = Math.max(1, Math.ceil((maxX - minX) * sCanvas + margin * 2));
+                const H = Math.max(1, Math.ceil((maxY - minY) * sCanvas + margin * 2));
+                const map = (p) => ({ x: (p.x - minX) * sCanvas + margin, y: (maxY - p.y) * sCanvas + margin });
+                const cvs = document.createElement('canvas');
+                cvs.width = W; cvs.height = H;
+                const ctx = cvs.getContext('2d');
+                ctx.clearRect(0, 0, W, H); // 透過背景
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 0.5 * sUnit * sMode * q; // ジオメトリ拡大に合わせて線幅も拡大（相対厚み維持）
+                ctx.lineJoin = 'round';
+                ctx.lineCap = 'round';
+                ctx.miterLimit = 2;
+                src.forEach(pl => {
+                    if (!pl.points || pl.points.length === 0) return;
+                    ctx.beginPath();
+                    let c = map(pl.points[0]);
+                    ctx.moveTo(c.x, c.y);
+                    for (let i = 1; i < pl.points.length; i++) { c = map(pl.points[i]); ctx.lineTo(c.x, c.y); }
+                    if (pl.closed && pl.points.length > 1) ctx.closePath();
+                    ctx.stroke();
+                });
+                cvs.toBlob((blob)=>{
+                    if (!blob) return;
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    const baseRaw = (fileName && String(fileName)) || 'dxf';
+                    const base = baseRaw.replace(/\.[^.]+$/, '').replace(/[\\/:*?"<>|]+/g, '_') || 'dxf';
+                    const suf = (scaleMode === '0.1') ? '-1_10' : '-1_1';
+                    a.download = `${base}-export${suf}.png`;
+                    a.href = url; a.style.display = 'none';
+                    document.body.appendChild(a); a.click();
+                    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 0);
+                }, 'image/png');
+            };
+
+            const findNearest = (point) => {
+                // 1) 頂点優先スナップ（一定ピクセル以内なら角/線端に吸着）
+                const pxTol = 12; // スナップ許容（px）
+                const tolW = pxTol / Math.max(1e-9, view.scale);
+                let vBest = null;
+                const polyFilter = (idx) => (lockToPoly && lockedPoly !== null ? idx === lockedPoly : true);
+                for (let pi = 0; pi < visiblePolys.length; pi++) {
+                    if (!polyFilter(pi)) continue;
+                    const P = visiblePolys[pi].points;
+                    for (let vi = 0; vi < P.length; vi++) {
+                        const p = P[vi];
+                        const d = dist(point, p);
+                        if (d <= tolW && (!vBest || d < vBest.d)) {
+                            vBest = { d, poly: pi, vert: vi, pt: { x: p.x, y: p.y } };
+                        }
+                    }
+                }
+                if (vBest) {
+                    // 頂点を既存の(seg,t)表現にマッピング
+                    const poly = visiblePolys[vBest.poly];
+                    const n = poly.points.length;
+                    let seg = 0, t = 0;
+                    if (poly.closed) {
+                        seg = (vBest.vert === n - 1) ? (n - 1) : vBest.vert; // 最終頂点は末尾セグのt=0
+                        t = 0;
+                    } else {
+                        if (vBest.vert === 0) { seg = 0; t = 0; }
+                        else if (vBest.vert === n - 1) { seg = n - 2; t = 1; }
+                        else { seg = vBest.vert; t = 0; }
+                    }
+                    return { d: vBest.d, poly: vBest.poly, seg, t, spt: vBest.pt };
+                }
+
+                // 2) セグメント最近点にスナップ
+                const pool = lockToPoly && lockedPoly !== null
+                    ? segments.filter(s => s.polyIndex === lockedPoly)
+                    : segments;
+                let best = null;
+                for (const s of pool) {
+                    const q = nearestOnSegment(point, s.a, s.b);
+                    const d = dist(point, q);
+                    if (!best || d < best.d) {
+                        best = { d, poly: s.polyIndex, seg: s.segIndex, t: q.t, spt: { x: q.x, y: q.y } };
+                    }
+                }
+                return best;
+            };
+
+            const onClickCanvas = (e) => {
+                // タグ操作中/直後のクリックは計測選択に流さない
+                const canvas = canvasRef.current;
+                if (tagClickGuardRef.current) { tagClickGuardRef.current = false; return; }
+                if (canvas) {
+                    const rect = canvas.getBoundingClientRect();
+                    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+                    const hit = (r)=> r && mx>=r.x && mx<=r.x+r.w && my>=r.y && my<=r.y+r.h;
+                    const R = tagRectsRef.current;
+                    if (hit(R.t1) || hit(R.t2) || hit(R.t3)) return; // タグ上クリックは無効
+                }
+                if (!segments.length) return;
+                const wpt = canvasToWorld(e);
+                const best = findNearest(wpt);
+                if (!best) return;
+
+                // v06: 最初のクリックはポリラインだけロックし、Aはまだ設定しない
+                if (lockToPoly && lockedPoly === null) {
+                    setLockedPoly(best.poly);
+                    setA(null);
+                    setB(null);
+                    setConstrainFromA(false);
+                    return;
+                }
+
+                if (!A) { 
+                    setA({ pt: best.spt, poly: best.poly, seg: best.seg, t: best.t });
+                    // A点クリック時のShift状態を保持（次のBに適用）
+                    setConstrainFromA(!!e.shiftKey);
+                    setAbConstrained(false);
+                    if (lockToPoly) setLockedPoly(best.poly);
+                } else if (!B) {
+                    // A時またはB時にShiftが押されていれば、Bは水平/垂直に制約（画面基準＝現在の回転に準拠）
+                    if ((constrainFromA || !!e.shiftKey) && A) {
+                        // 水平/垂直（画面基準）に厳密に拘束し、必ずポリラインとの交点にスナップ
+                        const raw = { x: wpt.x - A.pt.x, y: wpt.y - A.pt.y };
+                        const vView = rotateVec(raw, rot);
+                        const horizontal = Math.abs(vView.x) >= Math.abs(vView.y);
+                        const dirView = horizontal ? { x: 1, y: 0 } : { x: 0, y: 1 };
+                        setConstraintDir(horizontal ? 'H' : 'V');
+                        const dirWorld = rotateVec(dirView, -rot);
+
+                        // 対象セグメント集合
+                        const pool = lockToPoly && lockedPoly !== null
+                            ? segments.filter(s => s.polyIndex === lockedPoly)
+                            : segments;
+
+                        // 「直線」(両方向) と各セグメントの交点を収集（tの符号で除外しない）
+                        const candidates = [];
+                        for (const s of pool) {
+                            const inter = intersectRaySegment(A.pt, dirWorld, s.a, s.b);
+                            if (!inter) continue;
+                            candidates.push({ inter, s });
+                        }
+
+                        if (candidates.length) {
+                            // マウス位置に最も近い交点を採用
+                            let bestD = Infinity;
+                            let chosen = null;
+                            for (const c of candidates) {
+                                const d = dist(wpt, c.inter.pt);
+                                if (d < bestD) { bestD = d; chosen = c; }
+                            }
+                            if (chosen) {
+                                const newB = { pt: chosen.inter.pt, poly: chosen.s.polyIndex, seg: chosen.s.segIndex, t: chosen.inter.u };
+                                setB(newB);
+                                setConstrainFromA(false); // 一度適用したら解除
+                                setAbConstrained(true);
+                                pushMeasureLog(A, newB);
+                                return;
+                            }
+                        }
+                        // 交点が無い場合はBを確定しない（フォールバックしない）
+                        return;
+                    }
+                    const newB = { pt: best.spt, poly: best.poly, seg: best.seg, t: best.t };
+                    setB(newB);
+                    setConstrainFromA(false);
+                    setAbConstrained(false);
+                    pushMeasureLog(A, newB);
+                } else {
+                    setA({ pt: best.spt, poly: best.poly, seg: best.seg, t: best.t });
+                    setB(null);
+                    // 新しいA点設定時にShiftを再評価
+                    setConstrainFromA(!!e.shiftKey);
+                    setAbConstrained(false);
+                    if (lockToPoly && lockedPoly === null) setLockedPoly(best.poly);
+                }
+            };
+
+            const onWheel = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const canvas = canvasRef.current;
+                const rect = canvas.getBoundingClientRect();
+                const mx = e.clientX - rect.left;
+                const my = e.clientY - rect.top;
+                const H = canvas.height;
+                const worldAtMouse = rotateAround({ x: (mx - view.tx) / view.scale, y: ((H - my) - view.ty) / view.scale }, pivot, -rot);
+                const zoom = e.deltaY < 0 ? 1.1 : 0.9;
+                const newScale = Math.max(0.05, Math.min(20, view.scale * zoom));
+                const rx = rotateAround(worldAtMouse, pivot, rot);
+                const newTx = mx - rx.x * newScale;
+                const newTy = (H - my) - rx.y * newScale;
+                setView({ scale: newScale, tx: newTx, ty: newTy });
+                return false;
+            };
+
+            const onMouseDown = (e) => {
+                const canvas = canvasRef.current;
+                if (canvas) {
+                    const rect = canvas.getBoundingClientRect();
+                    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+                    const hit = (r)=> r && mx>=r.x && mx<=r.x+r.w && my>=r.y && my<=r.y+r.h;
+                    const R = tagRectsRef.current;
+                    // 直線→幅丈→沿い の順で優先
+                    for (const k of ['t2','t3','t1']) {
+                        if (hit(R[k])) {
+                            tagDragRef.current = { key:k, startX:e.clientX, startY:e.clientY, ox: tagOffset[k].dx, oy: tagOffset[k].dy };
+                            tagClickGuardRef.current = true; // クリックを計測選択に流さない
+                            try { e.preventDefault(); e.stopPropagation(); } catch {}
+                            setCursor('grabbing');
+                            return;
+                        }
+                    }
+                }
+                dragging.current = { x: e.clientX, y: e.clientY };
+                setIsDragging(true);
+                setCursor('grabbing');
+            };
+            
+            const onMouseMove = (e) => {
+                // カーソル更新（モード可視化）
+                try {
+                    // タグ上ホバー時は掴めるカーソル
+                    const canvas = canvasRef.current;
+                    if (!dragging.current && !tagDragRef.current && canvas) {
+                        const rect = canvas.getBoundingClientRect();
+                        const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+                        const hit = (r)=> r && mx>=r.x && mx<=r.x+r.w && my>=r.y && my<=r.y+r.h;
+                        const R = tagRectsRef.current;
+                        if (hit(R.t1) || hit(R.t2) || hit(R.t3)) { setCursor('grab'); return; }
+                    }
+                    if (tagDragRef.current) {
+                        setCursor('grabbing');
+                    } else if (dragging.current) {
+                        setCursor('grabbing');
+                    } else if (lockToPoly && lockedPoly === null) {
+                        setCursor('pointer');
+                    } else if (!A) {
+                        setCursor('crosshair');
+                    } else if (!B) {
+                        if (constrainFromA) {
+                            const canvas = canvasRef.current;
+                            if (canvas) {
+                                const rect = canvas.getBoundingClientRect();
+                                const mx = e.clientX - rect.left;
+                                const my = e.clientY - rect.top;
+                                const H = canvas.height;
+                                const worldAtMouse = rotateAround({ x: (mx - view.tx) / view.scale, y: ((H - my) - view.ty) / view.scale }, pivot, -rot);
+                                const raw = { x: worldAtMouse.x - A.pt.x, y: worldAtMouse.y - A.pt.y };
+                                const vView = rotateVec(raw, rot);
+                                const horizontal = Math.abs(vView.x) >= Math.abs(vView.y);
+                                setCursor(horizontal ? 'ew-resize' : 'ns-resize');
+                                setConstraintDir(horizontal ? 'H' : 'V');
+                            }
+                        } else {
+                            setCursor('crosshair');
+                            setConstraintDir(null);
+                        }
+                    } else {
+                        setCursor('crosshair');
+                        setConstraintDir(null);
+                    }
+                } catch {}
+
+                // タグドラッグ
+                if (tagDragRef.current) {
+                    const g = tagDragRef.current;
+                    const dx = e.clientX - g.startX;
+                    const dy = e.clientY - g.startY;
+                    setTagOffset((prev)=>({ ...prev, [g.key]: { dx: g.ox + dx, dy: g.oy + dy } }));
+                    return;
+                }
+                // パン
+                if (!dragging.current) return;
+                const dx = e.clientX - dragging.current.x;
+                const dy = e.clientY - dragging.current.y;
+                dragging.current = { x: e.clientX, y: e.clientY };
+                setView((v) => ({ ...v, tx: v.tx + dx, ty: v.ty - dy }));
+            };
+            
+            const onMouseUp = () => {
+                if (tagDragRef.current) {
+                    tagDragRef.current = null;
+                } else {
+                    dragging.current = null;
+                    setIsDragging(false);
+                }
+                // クリック抑止は onClick 側で消費して解除する
+            };
+
+            // ガイド描画
+            useEffect(() => {
+                if (!A || !B || !canvasRef.current) return;
+                // A/Bが現在の可視ポリラインに対して妥当か検証（ブロック切替直後の不整合を回避）
+                const polyA = (A.poly != null) ? visiblePolys[A.poly] : null;
+                const polyB = (B.poly != null) ? visiblePolys[B.poly] : null;
+                if (!polyA || !polyB) return;
+                const okLen = (pl) => Array.isArray(pl.points) && pl.points.length >= 2;
+                if (!okLen(polyA) || !okLen(polyB)) return;
+                const maxSegA = polyA.closed ? (polyA.points.length - 1) : (polyA.points.length - 2);
+                const maxSegB = polyB.closed ? (polyB.points.length - 1) : (polyB.points.length - 2);
+                if (A.seg < 0 || A.seg > maxSegA || B.seg < 0 || B.seg > maxSegB) return;
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext("2d");
+                const H = canvas.height;
+                const wc = (p) => {
+                    const r = rotateAround(p, pivot, rot);
+                    return { x: r.x * view.scale + view.tx, y: H - (r.y * view.scale + view.ty) };
+                };
+
+                const drawTag = (text, c, fontPx = 12, key = null) => {
+                    ctx.save();
+                    const size = Math.max(8, fontPx|0);
+                    ctx.font = `${size}px ui-sans-serif, system-ui`;
+                    const padX = Math.round(size * 0.5);
+                    const w = ctx.measureText(text).width + padX * 2;
+                    const h = Math.round(size * 1.5);
+                    const x = c.x + 8;
+                    const y = c.y - h - 8;
+                    ctx.fillStyle = "rgba(0,0,0,0.70)"; // 黒 70%
+                    ctx.strokeStyle = "rgba(148,163,184,0.8)"; // 実線のアウトライン
+                    ctx.setLineDash([]);
+                    ctx.lineWidth = 1;
+                    // 角丸長方形
+                    const r = Math.min(8, Math.floor(h / 3));
+                    ctx.beginPath();
+                    ctx.moveTo(x + r, y);
+                    ctx.lineTo(x + w - r, y);
+                    ctx.arcTo(x + w, y, x + w, y + r, r);
+                    ctx.lineTo(x + w, y + h - r);
+                    ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+                    ctx.lineTo(x + r, y + h);
+                    ctx.arcTo(x, y + h, x, y + h - r, r);
+                    ctx.lineTo(x, y + r);
+                    ctx.arcTo(x, y, x + r, y, r);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+                    // テキスト
+                    ctx.fillStyle = "#e2e8f0";
+                    ctx.fillText(text, x + padX, c.y - 8 - Math.round(size * 0.4));
+                    ctx.restore();
+                    if (key) tagRectsRef.current[key] = { x, y, w, h };
+                };
+
+                const a = A.pt, b = B.pt;
+                const ca = wc(a), cb = wc(b);
+                const snapPx = (p) => ({ x: Math.round(p.x), y: Math.round(p.y) });
+
+                // ② 直線（Shift制約で確定した計測では非表示）
+                if (!abConstrained) {
+                    ctx.save();
+                    ctx.strokeStyle = "#94a3b8";
+                    ctx.setLineDash([8, 6]);
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(ca.x, ca.y);
+                    ctx.lineTo(cb.x, cb.y);
+                    ctx.stroke();
+                    const mid = wc({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+                    // ①の推定位置と矩形を計算し、②を法線方向に十分逃がす
+                    const tag2 = `② 直線 ${(dist(a, b) * unitScale).toFixed(2)}`;
+                    const size2 = 24;
+                    const dxs = cb.x - ca.x, dys = cb.y - ca.y;
+                    const L = Math.hypot(dxs, dys) || 1;
+                    const nx = -dys / L, ny = dxs / L;
+                    let offN = Math.round(size2 * 1.5) + 12;
+                    let midOff = { x: mid.x + nx * offN, y: mid.y + ny * offN };
+                    try {
+                        if (A.poly === B.poly && visiblePolys[A.poly]) {
+                            const poly = visiblePolys[A.poly];
+                            const P = poly.points;
+                            const segLen = (i) => dist(P[i], i === P.length - 1 ? (poly.closed ? P[0] : P[i + 1]) : P[i + 1]);
+                            const cum = (()=>{ const c=[0]; let t=0; for(let i=0;i<P.length-1;i++){ t+=dist(P[i],P[i+1]); c.push(t);} if(poly.closed&&P.length>1){ t+=dist(P[P.length-1],P[0]); c.push(t);} return c; })();
+                            const total = cum[cum.length-1] || 0;
+                            const posOn = (si, tt)=> cum[si] + segLen(si) * tt;
+                            const sA = posOn(A.seg, A.t), sB = posOn(B.seg, B.t);
+                            let s0 = Math.min(sA, sB), s1 = Math.max(sA, sB);
+                            if (poly.closed) {
+                                const dF = (sB - sA + total) % total;
+                                if (dF <= total - dF) { s0 = sA; s1 = sA + dF; } else { s0 = sB; s1 = sB + (total - dF); }
+                            }
+                            const lenPath = s1 - s0;
+                            const pointAt = (s)=>{
+                                let ss = poly.closed ? ((s % total) + total) % total : Math.max(0, Math.min(total, s));
+                                let idx=0; while(idx<cum.length-1 && ss>cum[idx+1]) idx++;
+                                const segL2 = (idx < P.length-1) ? dist(P[idx], P[idx+1]) : (poly.closed ? dist(P[idx], P[0]) : 1e-9);
+                                const tt = segL2>1e-9 ? (ss - cum[idx]) / segL2 : 0;
+                                const aP=P[idx], bP=(idx<P.length-1)?P[idx+1]:(poly.closed?P[0]:P[idx]);
+                                return { x: aP.x + (bP.x - aP.x) * tt, y: aP.y + (bP.y - aP.y) * tt };
+                            };
+                            const pm = wc(pointAt(s0 + lenPath/2));
+                            // ①矩形
+                            const size1 = 24; const pad1 = Math.round(size1*0.5); const h1 = Math.round(size1*1.5);
+                            ctx.save(); ctx.font = `${size1}px ui-sans-serif, system-ui`;
+                            const w1 = ctx.measureText(`① 沿い ${(lenPath * unitScale).toFixed(2)}`).width + pad1*2; ctx.restore();
+                            const r1 = { x: pm.x + 8, y: pm.y - h1 - 8, w: w1, h: h1 };
+                            // ②候補矩形（+n）
+                            const pad2 = Math.round(size2*0.5); const h2 = Math.round(size2*1.5);
+                            ctx.save(); ctx.font = `${size2}px ui-sans-serif, system-ui`;
+                            const w2 = ctx.measureText(tag2).width + pad2*2; ctx.restore();
+                            const rectFor = (sx)=>({ x: (mid.x + nx*sx) + 8, y: (mid.y + ny*sx) - h2 - 8, w: w2, h: h2 });
+                            const inter = (a,b)=>!(a.x+a.w < b.x || b.x+b.w < a.x || a.y+a.h < b.y || b.y+b.h < a.y);
+                            let r2 = rectFor(offN);
+                            if (inter(r1, r2)) {
+                                const off2 = offN + h1 + 12;
+                                const r2b = rectFor(-off2);
+                                // どちらが被りが小さいかで選択
+                                const area = (x)=> Math.max(0, Math.min(x.x+x.w, r1.x+r1.w) - Math.max(x.x, r1.x)) * Math.max(0, Math.min(x.y+x.h, r1.y+r1.h) - Math.max(x.y, r1.y));
+                                midOff = (area(r2b) < area(r2)) ? { x: mid.x - nx*off2, y: mid.y - ny*off2 } : { x: mid.x + nx*off2, y: mid.y + ny*off2 };
+                            }
+                        }
+                    } catch {}
+                    const t2off = tagOffset.t2 || {dx:0,dy:0};
+                    drawTag(tag2, { x: midOff.x + t2off.dx, y: midOff.y + t2off.dy }, size2, 't2');
+                    ctx.restore();
+                }
+
+                if (showGuides) {
+                    // ③ 幅/丈（①タグと重なる場合は法線方向に逃がす）
+                    const placeTag3 = (corner) => {
+                        const size3 = 24;
+                        const text3 = (()=>{
+                            const raw = { x: b.x - a.x, y: b.y - a.y };
+                            const dv = rotateVec(raw, rot);
+                            const width = Math.abs(dv.x) * unitScale;
+                            const length = Math.abs(dv.y) * unitScale;
+                            return `③ 幅/丈: ${width.toFixed(2)} / ${length.toFixed(2)}`;
+                        })();
+                        const dxs = cb.x - ca.x, dys = cb.y - ca.y; const L = Math.hypot(dxs, dys) || 1;
+                        const nx = -dys / L, ny = dxs / L;
+                        let offN = Math.round(size3 * 1.5) + 12;
+                        let anchor = { x: corner.x + nx * offN, y: corner.y + ny * offN };
+                        try {
+                            if (A.poly === B.poly && visiblePolys[A.poly]) {
+                                const poly = visiblePolys[A.poly];
+                                const P = poly.points;
+                                const segLen = (i) => dist(P[i], i === P.length - 1 ? (poly.closed ? P[0] : P[i + 1]) : P[i + 1]);
+                                const cum = (()=>{ const c=[0]; let t=0; for(let i=0;i<P.length-1;i++){ t+=dist(P[i],P[i+1]); c.push(t);} if(poly.closed&&P.length>1){ t+=dist(P[P.length-1],P[0]); c.push(t);} return c; })();
+                                const total = cum[cum.length-1] || 0;
+                                const posOn = (si, tt)=> cum[si] + segLen(si) * tt;
+                                const sA = posOn(A.seg, A.t), sB = posOn(B.seg, B.t);
+                                let s0 = Math.min(sA, sB), s1 = Math.max(sA, sB);
+                                if (poly.closed) {
+                                    const dF = (sB - sA + total) % total;
+                                    if (dF <= total - dF) { s0 = sA; s1 = sA + dF; } else { s0 = sB; s1 = sB + (total - dF); }
+                                }
+                                const lenPath = s1 - s0;
+                                const pointAt = (s)=>{
+                                    let ss = poly.closed ? ((s % total) + total) % total : Math.max(0, Math.min(total, s));
+                                    let idx=0; while(idx<cum.length-1 && ss>cum[idx+1]) idx++;
+                                    const segL2 = (idx < P.length-1) ? dist(P[idx], P[idx+1]) : (poly.closed ? dist(P[idx], P[0]) : 1e-9);
+                                    const tt = segL2>1e-9 ? (ss - cum[idx]) / segL2 : 0;
+                                    const aP=P[idx], bP=(idx<P.length-1)?P[idx+1]:(poly.closed?P[0]:P[idx]);
+                                    return { x: aP.x + (bP.x - aP.x) * tt, y: aP.y + (bP.y - aP.y) * tt };
+                                };
+                                const pm = wc(pointAt(s0 + lenPath/2));
+                                // ①矩形
+                                const size1 = 24; const pad1 = Math.round(size1*0.5); const h1 = Math.round(size1*1.5);
+                                ctx.save(); ctx.font = `${size1}px ui-sans-serif, system-ui`;
+                                const w1 = ctx.measureText(`① 沿い ${(lenPath * unitScale).toFixed(2)}`).width + pad1*2; ctx.restore();
+                                const r1 = { x: pm.x + 8, y: pm.y - h1 - 8, w: w1, h: h1 };
+                                // ③候補矩形
+                                const pad3 = Math.round(size3*0.5); const h3 = Math.round(size3*1.5);
+                                ctx.save(); ctx.font = `${size3}px ui-sans-serif, system-ui`;
+                                const w3 = ctx.measureText(text3).width + pad3*2; ctx.restore();
+                                const rectFor = (sx)=>({ x: (corner.x + nx*sx) + 8, y: (corner.y + ny*sx) - h3 - 8, w: w3, h: h3 });
+                                const inter = (a,b)=>!(a.x+a.w < b.x || b.x+b.w < a.x || a.y+a.h < b.y || b.y+b.h < a.y);
+                                const r3a = rectFor(offN);
+                                if (inter(r1, r3a)) {
+                                    const off2 = offN + h1 + 12;
+                                    const r3b = rectFor(-off2);
+                                    const area = (rr)=> Math.max(0, Math.min(rr.x+rr.w, r1.x+r1.w) - Math.max(rr.x, r1.x)) * Math.max(0, Math.min(rr.y+rr.h, r1.y+r1.h) - Math.max(rr.y, r1.y));
+                                    anchor = (area(r3b) < area(r3a)) ? { x: corner.x - nx*off2, y: corner.y - ny*off2 } : { x: corner.x + nx*off2, y: corner.y + ny*off2 };
+                                }
+                            }
+                        } catch {}
+                        const t3off = tagOffset.t3 || {dx:0,dy:0};
+                        drawTag(text3, { x: anchor.x + t3off.dx, y: anchor.y + t3off.dy }, size3, 't3');
+                    };
+
+                    if (axisMode === "VIEW") {
+                        const ce = { x: cb.x, y: ca.y };
+                        ctx.save();
+                        ctx.strokeStyle = "#f59e0b";
+                        ctx.setLineDash([4, 4]);
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(ca.x, ca.y);
+                        ctx.lineTo(ce.x, ce.y);
+                        ctx.lineTo(cb.x, cb.y);
+                        ctx.stroke();
+                        placeTag3(ce);
+                        ctx.restore();
+                    } else {
+                        const elbow = { x: b.x, y: a.y };
+                        const ce = wc(elbow);
+                        ctx.save();
+                        ctx.strokeStyle = "#f59e0b";
+                        ctx.setLineDash([4, 4]);
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(ca.x, ca.y);
+                        ctx.lineTo(ce.x, ce.y);
+                        ctx.lineTo(cb.x, cb.y);
+                        ctx.stroke();
+                        placeTag3(ce);
+                        ctx.restore();
+                    }
+
+                    // ① 沿い距離
+                    if (A.poly === B.poly && visiblePolys[A.poly]) {
+                        const poly = visiblePolys[A.poly];
+                        const n = poly.points.length;
+                        const maxSeg = poly.closed ? (n - 1) : (n - 2);
+                        if (A.seg < 0 || A.seg > maxSeg || B.seg < 0 || B.seg > maxSeg) {
+                            // セグメント不整合時は沿い距離描画をスキップ
+                            // （ブロック切替直後の一時的なズレに対応）
+                            // 他のガイド描画は継続
+                        } else {
+                        const { cum, total } = cumulativeLengths(poly);
+                        const P = poly.points;
+                        const segLen = (i) => dist(P[i], i === P.length - 1 ? (poly.closed ? P[0] : P[i + 1]) : P[i + 1]);
+                        const posOn = (segIdx, t) => cum[segIdx] + segLen(segIdx) * t;
+                        const sA = posOn(A.seg, A.t), sB = posOn(B.seg, B.t);
+                        
+                        let s0 = Math.min(sA, sB), s1 = Math.max(sA, sB);
+                        if (poly.closed) {
+                            const dF = (sB - sA + total) % total;
+                            if (dF <= total - dF) {
+                                s0 = sA;
+                                s1 = sA + dF;
+                            } else {
+                                s0 = sB;
+                                s1 = sB + (total - dF);
+                            }
+                        }
+                        const lenPath = s1 - s0;
+                        
+                        const pointAt = (s) => {
+                            let ss = s;
+                            if (poly.closed) {
+                                ss = ((s % total) + total) % total;
+                            } else {
+                                ss = Math.max(0, Math.min(total, s));
+                            }
+                            let idx = 0;
+                            while (idx < cum.length - 1 && ss > cum[idx + 1]) idx++;
+                            const segL = (idx < P.length - 1) ? dist(P[idx], P[idx + 1]) : (poly.closed ? dist(P[idx], P[0]) : 1e-9);
+                            const t = segL > 1e-9 ? (ss - cum[idx]) / segL : 0;
+                            const aP = P[idx];
+                            const bP = (idx < P.length - 1) ? P[idx + 1] : (poly.closed ? P[0] : P[idx]);
+                            return { x: aP.x + (bP.x - aP.x) * t, y: aP.y + (bP.y - aP.y) * t };
+                        };
+                        
+                        ctx.save();
+                        ctx.strokeStyle = "#38bdf8";
+                        ctx.lineWidth = 2; // 張り出し抑制
+                        ctx.lineJoin = 'round';
+                        ctx.lineCap = 'round';
+                        ctx.miterLimit = 2;
+                        ctx.beginPath();
+                        // 均等ステップ＋角(境界)を含めたサンプリング
+                        const steps = Math.max(12, Math.min(200, Math.floor(lenPath / Math.max(1, total / 80))));
+                        const sValues = [];
+                        for (let i = 0; i <= steps; i++) sValues.push(s0 + (lenPath * i) / steps);
+                        for (let k = 0; k < cum.length; k++) {
+                            const ss = cum[k];
+                            if (ss > s0 && ss < s1) sValues.push(ss);
+                            if (poly.closed) {
+                                const ss2 = ss + total; if (ss2 > s0 && ss2 < s1) sValues.push(ss2);
+                            }
+                        }
+                        sValues.sort((a,b)=>a-b);
+                        let first = true;
+                        for (let i = 0; i < sValues.length; i++) {
+                            const s = sValues[i];
+                            const pw = pointAt(s);
+                            const cc = wc(pw);
+                            const c = { x: Math.round(cc.x), y: Math.round(cc.y) }; // ピクセルスナップ
+                            if (first) { ctx.moveTo(c.x, c.y); first = false; }
+                            else ctx.lineTo(c.x, c.y);
+                        }
+                        ctx.stroke();
+                        const midS = s0 + lenPath / 2;
+                        const pm0 = wc(pointAt(midS));
+                        const pm = { x: Math.round(pm0.x), y: Math.round(pm0.y) };
+                        const t1off = tagOffset.t1 || {dx:0,dy:0};
+                        drawTag(`① 沿い ${(lenPath * unitScale).toFixed(2)}`, { x: pm.x + t1off.dx, y: pm.y + t1off.dy }, 24, 't1');
+                        ctx.restore();
+                        }
+                    }
+                }
+
+                // A/Bマーカー（Shift制約で確定時はピクセルスナップして描画）
+                ctx.save();
+                const caDraw = abConstrained ? snapPx(ca) : ca;
+                const cbDraw = abConstrained ? snapPx(cb) : cb;
+                ctx.fillStyle = "#22c55e";
+                ctx.beginPath();
+                ctx.arc(caDraw.x, caDraw.y, 6, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = "#ef4444";
+                ctx.beginPath();
+                ctx.arc(cbDraw.x, cbDraw.y, 6, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+
+                // 精度タグ（任意表示）
+                if (showAccuracyTag) {
+                    const raw = { x: b.x - a.x, y: b.y - a.y };
+                    const dv = rotateVec(raw, rot);
+                    const err = (constraintDir === 'H') ? Math.abs(dv.y) * unitScale : (constraintDir === 'V' ? Math.abs(dv.x) * unitScale : 0);
+                    const cbTag = abConstrained ? cbDraw : cb;
+                    drawTag(`制約${constraintDir ?? '-'} 逸脱=${err.toFixed(4)}`, cbTag);
+                }
+            }, [A, B, view, visiblePolys, unitScale, showGuides, rot, pivot, axisMode, viewportTick, tagOffset]);
+
+            // 計測結果
+            const result = useMemo(() => {
+                if (!A || !B) return null;
+                const a = A.pt, b = B.pt;
+                const straight = dist(a, b) * unitScale;
+                const raw = { x: b.x - a.x, y: b.y - a.y };
+                const dv = axisMode === "VIEW" ? rotateVec(raw, rot) : raw;
+                const dx = dv.x * unitScale;
+                const dy = dv.y * unitScale;
+                
+                if (A.poly === B.poly && visiblePolys[A.poly]) {
+                    const poly = visiblePolys[A.poly];
+                    if (Array.isArray(poly.points) && poly.points.length >= 2) {
+                        const n = poly.points.length;
+                        const maxSeg = poly.closed ? (n - 1) : (n - 2);
+                        const validA = A.seg >= 0 && A.seg <= maxSeg && isFinite(A.t);
+                        const validB = B.seg >= 0 && B.seg <= maxSeg && isFinite(B.t);
+                        if (validA && validB) {
+                            const { cum, total } = cumulativeLengths(poly);
+                            const P = poly.points;
+                            const segLen = (i) => dist(P[i], i === P.length - 1 ? (poly.closed ? P[0] : P[i + 1]) : P[i + 1]);
+                            const posOn = (segIdx, t) => cum[segIdx] + segLen(segIdx) * t;
+                            const aLen = posOn(A.seg, A.t);
+                            const bLen = posOn(B.seg, B.t);
+                            const d = Math.abs(bLen - aLen);
+                            const minor = poly.closed ? Math.min(d, total - d) : d;
+                            const major = poly.closed ? Math.max(d, total - d) : NaN;
+                            return { straight, dx, dy, along: { samePoly: true, minor: minor * unitScale, major: major * unitScale, perimeter: total * unitScale } };
+                        }
+                    }
+                }
+                return { straight, dx, dy, along: { samePoly: false, minor: NaN, major: NaN, perimeter: NaN } };
+            }, [A, B, visiblePolys, unitScale, axisMode, rot]);
+
+            const fmt = (n) => (n == null || isNaN(n) ? "-" : n.toFixed(2));
+
+            // ホイールズーム: 一度だけ登録し、最新値はrefsから読む（リスナー蓄積を防ぐ）
+            useEffect(() => {
+                const handleWheel = (e) => {
+                    const canvas = canvasRef.current;
+                    if (!canvas) return;
+                    const rect = canvas.getBoundingClientRect();
+                    const mxAbs = e.clientX, myAbs = e.clientY;
+                    // キャンバス領域外なら無視
+                    if (mxAbs < rect.left || mxAbs > rect.right || myAbs < rect.top || myAbs > rect.bottom) return;
+                    // 実際にポインタ直下がキャンバス（もしくはその子要素）か確認（ヘッダー等のオーバーレイを除外）
+                    const el = document.elementFromPoint(mxAbs, myAbs);
+                    const onCanvas = (el === canvas) || (!!el && typeof el.closest === 'function' && el.closest('canvas') === canvas);
+                    if (!onCanvas) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const mx = mxAbs - rect.left;
+                    const my = myAbs - rect.top;
+                    const H = canvas.height;
+                    const v = viewRef.current;
+                    const pv = pivotRef.current;
+                    const r = rotRef.current;
+                    const worldAtMouse = rotateAround({ x: (mx - v.tx) / v.scale, y: ((H - my) - v.ty) / v.scale }, pv, -r);
+                    const zoom = e.deltaY < 0 ? 1.1 : 0.9;
+                    const newScale = Math.max(0.05, Math.min(20, v.scale * zoom));
+                    const rx = rotateAround(worldAtMouse, pv, r);
+                    const newTx = mx - rx.x * newScale;
+                    const newTy = (H - my) - rx.y * newScale;
+                    setView({ scale: newScale, tx: newTx, ty: newTy });
+                    return false;
+                };
+                window.addEventListener('wheel', handleWheel, { passive: false, capture: true });
+                return () => {
+                    window.removeEventListener('wheel', handleWheel, true);
+                };
+            }, []);
+
+            // Drag & Drop DXF support
+            const handleDragOver = (e) => {
+                try { e.preventDefault(); } catch {}
+                try { if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; } catch {}
+            };
+            const handleDrop = (e) => {
+                try { e.preventDefault(); e.stopPropagation(); } catch {}
+                const dt = e.dataTransfer;
+                if (!dt) return;
+                let file = null;
+                if (dt.items && dt.items.length) {
+                    for (let i = 0; i < dt.items.length; i++) {
+                        const it = dt.items[i];
+                        if (it.kind === 'file') {
+                            const f = it.getAsFile();
+                            if (f) {
+                                if (!file) file = f;
+                                if (f.name && f.name.toLowerCase().endsWith('.dxf')) { file = f; break; }
+                            }
+                        }
+                    }
+                } else if (dt.files && dt.files.length) {
+                    for (let i = 0; i < dt.files.length; i++) {
+                        const f = dt.files[i];
+                        if (f.name && f.name.toLowerCase().endsWith('.dxf')) { file = f; break; }
+                    }
+                    if (!file) file = dt.files[0];
+                }
+                if (file) {
+                    pickFile(file);
+                    try { setFileName(file.name || ''); } catch {}
+                    setA(null);
+                    setB(null);
+                    setSelectedBlock('ALL');
+                    setLockedPoly(null);
+                    setFirstFitDone(false);
+                    try { legacyDocKeyRef.current = `${file.name}:${file.size}:${file.lastModified||0}`; } catch {}
+                }
+            };
+
+            return React.createElement('div', {
+                className: "h-screen grid grid-cols-[0px_1fr] bg-slate-950 text-slate-200 relative"
+            }, [
+                React.createElement('aside', {
+                    key: 'sidebar',
+                    className: "p-4 border-r border-slate-700 space-y-3 overflow-y-auto sidebar-scroll"
+                }, [
+                    React.createElement('h1', { key: 'title', className: "text-lg font-semibold" }, 'DXF 計測ツール（スタンドアロン版）'),
+                    
+                    React.createElement('div', { key: 'file-input' }, 
+                        React.createElement('input', {
+                            type: 'file',
+                            accept: '.dxf',
+                            onChange: (e) => {
+                                const f = e.target.files?.[0];
+                                if (f) {
+                                    pickFile(f);
+                                    try { setFileName(f.name||''); } catch {}
+                                    setA(null);
+                                    setB(null);
+                                    setSelectedBlock("ALL");
+                                    setLockedPoly(null);
+                                    setFirstFitDone(false);
+                                    try { legacyDocKeyRef.current = `${f.name}:${f.size}:${f.lastModified||0}`; } catch {}
+                                }
+                            }
+                        })
+                    ),
+                    
+                    React.createElement('div', { key: 'controls', className: "grid gap-2" }, [
+                        React.createElement('label', { key: 'scale', className: "text-sm" }, [
+                            '単位スケール（DXF → 出力）',
+                            React.createElement('input', {
+                                type: 'number',
+                                step: 0.01,
+                                value: unitScale,
+                                onChange: (e) => setUnitScale(parseFloat(e.target.value) || 1),
+                                className: "mt-1 w-full bg-slate-900 text-white border border-slate-700 rounded px-2 py-1"
+                            }),
+                            React.createElement('div', { className: "text-xs text-slate-400" }, 
+                                '例：DXF=mm→mm=1、cm→mm=10、inch→mm=25.4'
+                            )
+                        ]),
+
+                        // 書き出し（SVG・精度一致）
+                        React.createElement('div', { key: 'exporter', className: "p-2 bg-slate-900 border border-slate-700 rounded space-y-2" }, [
+                            React.createElement('div', { className: 'text-sm font-medium' }, '書き出し (SVG)'),
+                            React.createElement('div', { className:'flex items-center gap-2 text-xs' }, [
+                                React.createElement('label', {}, '範囲'),
+                                React.createElement('select', { id:'exp-scope', className:"bg-slate-900 text-white border border-slate-700 rounded px-2 py-1" }, [
+                                    React.createElement('option', { key:'VISIBLE', value:'VISIBLE' }, selectedBlock==='ALL' ? '表示(全体)' : '表示(選択ブロック)'),
+                                    React.createElement('option', { key:'ALL', value:'ALL' }, 'ALL')
+                                ]),
+                                React.createElement('label', { className:'ml-2' }, 'スケール'),
+                                React.createElement('select', { id:'exp-scale', className:"bg-slate-900 text-white border border-slate-700 rounded px-2 py-1" }, [
+                                    React.createElement('option', { key:'1', value:'1' }, '1:1'),
+                                    React.createElement('option', { key:'0.1', value:'0.1' }, '1:10')
+                                ]),
+                                React.createElement('button', { className:'ml-auto px-2 py-1 bg-slate-800 border border-slate-700 rounded hover:bg-slate-700', onClick:()=>{
+                                    try{
+                                        const scope = (document.getElementById('exp-scope')||{}).value || 'VISIBLE';
+                                        const scl = (document.getElementById('exp-scale')||{}).value || '1';
+                                        exportSvg(scope, scl);
+                                    }catch{ }
+                                } }, 'SVG')
+                            ])
+                        ]),
+                        
+                        blockNames.length > 0 && React.createElement('label', { key: 'block-select', className: "text-sm" }, [
+                            '表示ブロック',
+                            React.createElement('select', {
+                                value: selectedBlock,
+                                onChange: (e) => setSelectedBlock(e.target.value),
+                                className: "mt-1 w-full bg-slate-900 text-white border border-slate-700 rounded px-2 py-1",
+                                onDoubleClick: () => beginRename(selectedBlock)
+                            }, [
+                                React.createElement('option', { key: 'all', value: 'ALL' }, '（全て表示）'),
+                                ...blockNames.map((bn) => 
+                                    React.createElement('option', { key: bn, value: bn }, displayName(bn))
+                                )
+                            ]),
+                            renameTarget && renameTarget===selectedBlock && selectedBlock!=='ALL' && React.createElement('div', { className:'mt-2' }, (
+                                React.createElement('input', {
+                                    ref: renameInputRef,
+                                    value: renameValue,
+                                    onChange: (e)=>setRenameValue(e.target.value),
+                                    onBlur: commitRename,
+                                    onKeyDown: (e)=>{ if(e.key==='Enter') commitRename(); if(e.key==='Escape') cancelRename(); },
+                                    className:'w-full bg-slate-900 text-white border border-slate-700 rounded px-2 py-1 text-sm',
+                                    placeholder:'新しいパーツ名（Enter確定）'
+                                })
+                            ))
+                        ]),
+                        
+                        // ロック設定
+                        React.createElement('div', { key: 'lock-settings', className: "mt-1 p-2 bg-slate-900 border border-slate-700 rounded space-y-2" }, [
+                            React.createElement('label', { className: "inline-flex items-center gap-2 text-sm" }, [
+                                React.createElement('input', {
+                                    type: 'checkbox',
+                                    checked: lockToPoly,
+                                    onChange: (e) => {
+                                        setLockToPoly(e.target.checked);
+                                        if (!e.target.checked) setLockedPoly(null);
+                                    }
+                                }),
+                                '同一ポリラインにロック（推奨）'
+                            ]),
+                            React.createElement('div', { className: "text-xs text-slate-400" },
+                                lockToPoly ? (
+                                    lockedPoly === null 
+                                        ? "最初のクリックで対象ポリラインを自動ロックします。"
+                                        : `対象ポリラインをロック中（#${lockedPoly}${visiblePolys[lockedPoly]?.name ? `: ${displayName(visiblePolys[lockedPoly].name)}` : ""}）`
+                                ) : "ロックしない：任意の線にスナップします。"
+                            ),
+                            React.createElement('div', { className: "flex gap-2 flex-wrap" }, [
+                                React.createElement('button', {
+                                    key: 'unlock',
+                                    onClick: () => setLockedPoly(null),
+                                    className: "px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded"
+                                }, 'ロック解除'),
+                                React.createElement('button', {
+                                    key: 'reset',
+                                    onClick: () => { setA(null); setB(null); },
+                                    className: "px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded"
+                                }, 'A/Bリセット')
+                            ])
+                        ]),
+                        
+                        // 回転 & フィット
+                        React.createElement('div', { key: 'rotation', className: "mt-1 p-2 bg-slate-900 border border-slate-700 rounded space-y-2" }, [
+                            React.createElement('div', { className: "flex items-center justify-between" }, [
+                                React.createElement('span', { className: "text-sm" }, [
+                                    '表示回転: ',
+                                    React.createElement('strong', {}, `${rot}°`)
+                                ]),
+                                React.createElement('div', { className: "flex gap-2" }, [
+                                    React.createElement('button', {
+                                        onClick: () => setRot((p) => ((((p + 90) % 360)))),
+                                        className: "px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded"
+                                    }, '↺ +90°'),
+                                    React.createElement('button', {
+                                        onClick: () => setRot((p) => ((((p - 90) + 360) % 360))),
+                                        className: "px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded"
+                                    }, '↻ -90°'),
+                                    React.createElement('button', {
+                                        onClick: () => setRot(0),
+                                        className: "px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded"
+                                    }, '0°')
+                                ])
+                            ]),
+                            React.createElement('div', { className: "flex items-center justify-between gap-2 flex-wrap" }, [
+                                React.createElement('label', { className: "inline-flex items-center gap-2 text-sm" }, [
+                                    React.createElement('input', {
+                                        type: 'checkbox',
+                                        checked: autoFitOnRotate,
+                                        onChange: (e) => setAutoFitOnRotate(e.target.checked)
+                                    }),
+                                    '回転時に自動フィット'
+                                ]),
+                                React.createElement('div', { className: "flex gap-2" }, [
+                                    React.createElement('button', {
+                                        onClick: () => {
+                                            const c = canvasRef.current;
+                                            if (c) fitToCanvas(rot, c.clientWidth, c.clientHeight, "ALL");
+                                        },
+                                        className: "px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded"
+                                    }, '全体にフィット'),
+                                    React.createElement('button', {
+                                        onClick: () => {
+                                            const c = canvasRef.current;
+                                            if (c) fitToCanvas(rot, c.clientWidth, c.clientHeight, "LOCKED");
+                                        },
+                                        disabled: lockedPoly == null,
+                                        className: "px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded disabled:opacity-50"
+                                    }, 'ロックにフィット')
+                                ])
+                            ])
+                        ]),
+                        
+                        // 幅/丈の基準
+                        React.createElement('div', { key: 'axis-mode', className: "mt-1 p-2 bg-slate-900 border border-slate-700 rounded space-y-2" }, [
+                            React.createElement('div', { className: "text-sm font-medium" }, '幅/丈の基準'),
+                            React.createElement('label', { className: "text-sm inline-flex items-center gap-2" }, [
+                                React.createElement('input', {
+                                    type: 'radio',
+                                    name: 'axismode',
+                                    checked: axisMode === "VIEW",
+                                    onChange: () => setAxisMode("VIEW")
+                                }),
+                                '画面基準（回転後）'
+                            ]),
+                            React.createElement('label', { className: "text-sm inline-flex items-center gap-2" }, [
+                                React.createElement('input', {
+                                    type: 'radio',
+                                    name: 'axismode',
+                                    checked: axisMode === "DXF",
+                                    onChange: () => setAxisMode("DXF")
+                                }),
+                                'DXF座標基準'
+                            ]),
+                            React.createElement('div', { className: "text-xs text-slate-400" }, 
+                                '※ 画面基準＝いま見えている上下左右。DXF座標基準＝元データのX/Y。'
+                            )
+                        ])
+                    ]),
+                    
+                    // 測定結果表示
+                    React.createElement('div', { key: 'measurements', className: "text-sm leading-6" }, [
+                        React.createElement('div', { className: "mb-1" }, [
+                            React.createElement('strong', {}, 'A: '),
+                            A ? `(${A.pt.x.toFixed(2)}, ${A.pt.y.toFixed(2)})` 
+                              : React.createElement('span', { className: "text-slate-400" }, '未選択')
+                        ]),
+                        React.createElement('div', { className: "mb-2" }, [
+                            React.createElement('strong', {}, 'B: '),
+                            B ? `(${B.pt.x.toFixed(2)}, ${B.pt.y.toFixed(2)})` 
+                              : React.createElement('span', { className: "text-slate-400" }, '未選択')
+                        ]),
+                        A && B && result && React.createElement('div', { className: "mt-2 p-3 bg-slate-900 border border-slate-700 rounded" }, [
+                            React.createElement('div', { className: "mb-1" }, [
+                                React.createElement('strong', {}, '② 直線距離: '),
+                                result.straight.toFixed(2)
+                            ]),
+                            React.createElement('div', { className: "mb-1" }, [
+                                React.createElement('strong', {}, '③ 幅 / 丈: '),
+                                `${Math.abs(result.dx).toFixed(2)} / ${Math.abs(result.dy).toFixed(2)} `,
+                                React.createElement('span', { className: "text-slate-400" }, 
+                                    `(符号 dx=${result.dx.toFixed(2)} / dy=${result.dy.toFixed(2)})`
+                                )
+                            ]),
+                            result.along?.samePoly ? [
+                                React.createElement('div', { key: 'along', className: "mb-1" }, [
+                                    React.createElement('strong', {}, 
+                                        `① 沿い距離（短経路${visiblePolys[A.poly]?.closed ? "/長経路" : ""}）: `
+                                    ),
+                                    result.along.minor.toFixed(2),
+                                    visiblePolys[A.poly]?.closed ? ` / ${result.along.major.toFixed(2)}` : ""
+                                ]),
+                                React.createElement('div', { key: 'perimeter' }, [
+                                    React.createElement('strong', {}, '選択ポリラインの外周: '),
+                                    result.along.perimeter.toFixed(2)
+                                ])
+                            ] : React.createElement('div', { className: "text-amber-400" }, 
+                                'AとBが同一ポリライン上ではありません（沿い距離は計算不可）。'
+                            )
+                        ])
+                    ]),
+                    
+                    // 計測ログ
+                    React.createElement('div', { key: 'log', className: "mt-3 p-3 bg-slate-900 border border-slate-700 rounded" }, [
+                        React.createElement('div', { className: "flex items-center justify-between mb-2" }, [
+                            React.createElement('strong', {}, '計測ログ'),
+                        React.createElement('div', { className: "flex items-center gap-3" }, [
+                            React.createElement('label', { className: "text-sm inline-flex items-center gap-1" }, [
+                                React.createElement('input', {
+                                    type: 'checkbox',
+                                    checked: showLog,
+                                    onChange: (e) => setShowLog(e.target.checked)
+                                }),
+                                '表示'
+                            ]),
+                            React.createElement('button', {
+                                onClick: exportCsv,
+                                className: "text-xs px-2 py-1 bg-emerald-700/80 hover:bg-emerald-700 border border-emerald-800 rounded"
+                            }, 'CSV書き出し'),
+                            React.createElement('button', {
+                                onClick: () => setMeasureLog([]),
+                                className: "text-xs px-2 py-1 bg-slate-800 border border-slate-700 rounded"
+                            }, '全消去')
+                        ])
+                        ]),
+                        showLog && (
+                            measureLog.length === 0 
+                                ? React.createElement('div', { className: "text-slate-400 text-sm" }, '（まだ計測がありません）')
+                                : React.createElement('ol', { className: "space-y-2 max-h-64 overflow-y-auto pr-1" },
+                                    measureLog.map((m, idx) => 
+                                        React.createElement('li', {
+                                            key: m.id,
+                                            className: "text-sm bg-slate-950/40 border border-slate-700 rounded p-2"
+                                        }, [
+                                            React.createElement('div', { className: "text-xs text-slate-400 mb-1 flex items-center justify-between" }, [
+                                                `#${measureLog.length - idx} ・${new Date(m.time).toLocaleTimeString()}・A(${m.a.x.toFixed(2)},${m.a.y.toFixed(2)})→B(${m.b.x.toFixed(2)},${m.b.y.toFixed(2)})`,
+                                                React.createElement('button', { className:'ml-2 px-2 py-0.5 text-[10px] bg-red-700/80 hover:bg-red-700 border border-red-800 rounded text-white', onClick:()=>deleteLog(m.id) }, '削除')
+                                            ]),
+                                            (m.origName || m.partName) && React.createElement('div', { className: 'text-xs text-slate-400 flex items-center gap-2' }, [
+                                                'パーツ: ',
+                                                React.createElement('span', { className:'inline-block px-2 py-1 bg-slate-900 border border-slate-700 rounded cursor-text', onDoubleClick:()=> m.origName && beginRename(m.origName) }, m.origName ? displayName(m.origName) : (m.partName||''))
+                                            ]),
+                                            (renameTarget && m.origName && renameTarget===m.origName) && React.createElement('div', { className:'mt-1' }, (
+                                React.createElement('input', { ref:renameInputRef, value:renameValue, onChange:(e)=>setRenameValue(e.target.value), onKeyDown:(e)=>{ if(e.key==='Enter') commitRename(); if(e.key==='Escape') cancelRename(); }, className:'w-full bg-slate-900 text-white border border-slate-700 rounded px-2 py-1 text-xs select-text', placeholder:'新しいパーツ名（Enter確定）' })
+                                            )),
+                                            React.createElement('div', {}, [
+                                                '幅: ',
+                                                React.createElement('span', { className: "font-medium" }, fmt(m.width)),
+                                                ' / 丈: ',
+                                                React.createElement('span', { className: "font-medium" }, fmt(m.length))
+                                            ]),
+                                            React.createElement('div', {}, [
+                                                '直線距離: ',
+                                                React.createElement('span', { className: "font-medium" }, fmt(m.straight))
+                                            ]),
+                                            React.createElement('div', {}, [
+                                                '沿い距離: ',
+                                                React.createElement('span', { className: "font-medium" }, 
+                                                    m.along == null ? '—' : fmt(m.along)
+                                                )
+                                            ]),
+                                            React.createElement('div', { className:'mt-1' }, [
+                                                React.createElement('label', { className:'text-xs text-slate-400 mr-2' }, '部位'),
+                                                React.createElement('input', { value:m.note||'', onChange:(e)=>updateLogNote(m.id, e.target.value), className:'w-full bg-slate-900 text-white border border-slate-700 rounded px-2 py-1 text-xs', placeholder:'例：股ぐり、肩線、脇線 など' })
+                                            ])
+                                        ])
+                                    )
+                                )
+                        )
+                    ]),
+                    
+                    React.createElement('div', { key: 'help', className: "text-xs text-slate-400 mt-2 space-y-1" }, [
+                        React.createElement('div', {}, [
+                            '凡例: ',
+                            React.createElement('span', { className: "text-slate-300" }, '②灰色点線=直線距離'),
+                            ' / ',
+                            React.createElement('span', { className: "text-slate-300" }, '③橙L字=幅/丈'),
+                            ' / ',
+                            React.createElement('span', { className: "text-slate-300" }, '①青太線=沿い距離(短経路)')
+                        ]),
+                        React.createElement('div', {}, '操作: 左クリック=スナップ / ホイール=ズーム / ドラッグ=パン'),
+                        React.createElement('div', {}, [
+                            'ヒント: 「同一ポリラインにロック」をONにすると、最初にクリックした線が',
+                            React.createElement('strong', {}, 'ハイライト'),
+                            'され、以降A/Bは必ずその線上にスナップします。重なり線の測定に有効。'
+                        ])
+                    ])
+                ]),
+                
+                React.createElement('main', { key: 'canvas-container', className: "relative", style: { paddingTop: '44px' }, onDragOver: handleDragOver, onDrop: handleDrop },
+                    // ミニマルツールバー（オーバーレイ）
+                    React.createElement('header', { className: "absolute top-0 left-0 right-0 z-10 backdrop-blur bg-slate-950/70 border-b border-slate-800" },
+                        React.createElement('div', { className: "flex items-center gap-2 px-3 py-2" }, [
+                            React.createElement('div', { className: "font-semibold tracking-wide pr-2" }, 'DXF Measure'),
+                            fileName && React.createElement('div', { className: 'text-xs text-slate-400 truncate max-w-[24ch]' }, fileName),
+                            React.createElement('label', { className: "px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded cursor-pointer hover:bg-slate-700" }, [
+                                'ファイル',
+                                React.createElement('input', { type:'file', accept:'.dxf', className:'hidden', onChange:(e)=>{ const f=e.target.files?.[0]; if(f){ pickFile(f); try{ setFileName(f.name||''); }catch{}; setA(null); setB(null); setSelectedBlock('ALL'); setLockedPoly(null); setFirstFitDone(false); try{ legacyDocKeyRef.current = `${f.name}:${f.size}:${f.lastModified||0}`;}catch{} } } })
+                            ]),
+                            // 書き出しグループ（左端配置）
+                            React.createElement('div', { className:'flex items-center gap-1 px-2 py-1 rounded-md border-2 border-emerald-600/60 bg-emerald-900/10' }, [
+                                React.createElement('span', { className:'text-xs text-emerald-400' }, '書き出し'),
+                                React.createElement('span', { className:'mx-1 text-slate-600' }, '｜'),
+                                React.createElement('select', { id:'exp2-scope', className:"bg-slate-900 text-white border border-slate-700 rounded px-2 py-1 text-xs" }, [
+                                    React.createElement('option', { key:'VISIBLE', value:'VISIBLE' }, selectedBlock==='ALL' ? '表示(全体)' : '表示(選択)'),
+                                    React.createElement('option', { key:'ALL', value:'ALL' }, 'ALL')
+                                ]),
+                                React.createElement('select', { id:'exp2-scale', className:"bg-slate-900 text-white border border-slate-700 rounded px-2 py-1 text-xs" }, [
+                                    React.createElement('option', { key:'1', value:'1' }, '1:1'),
+                                    React.createElement('option', { key:'0.1', value:'0.1' }, '1:10')
+                                ]),
+                                React.createElement('span', { className:'mx-1 text-slate-600' }, '｜'),
+                                React.createElement('button', { className: 'px-2 py-1 text-xs bg-emerald-700/80 hover:bg-emerald-700 border border-emerald-800 rounded', onClick:()=>{ try{ const sc=(document.getElementById('exp2-scope')||{}).value||'VISIBLE'; const scl=(document.getElementById('exp2-scale')||{}).value||'1'; exportSvg(sc, scl);}catch{} } }, 'SVG'),
+                                React.createElement('button', { className: 'px-2 py-1 text-xs bg-emerald-700/80 hover:bg-emerald-700 border border-emerald-800 rounded', onClick:()=>{ try{ const sc=(document.getElementById('exp2-scope')||{}).value||'VISIBLE'; const scl=(document.getElementById('exp2-scale')||{}).value||'1'; exportPng(sc, scl);}catch{} } }, 'PNG')
+                            ]),
+                            React.createElement('div', { className: "flex items-center gap-1" }, [
+                                React.createElement('button', { className: "px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded hover:bg-slate-700", onClick: ()=>setRot((p)=>(p+90)%360) }, '↺'),
+                                React.createElement('button', { className: "px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded hover:bg-slate-700", onClick: ()=>setRot((p)=>((p-90+360)%360)) }, '↻'),
+                                React.createElement('button', { className: "px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded hover:bg-slate-700", onClick: ()=>setRot(0) }, '0°'),
+                                React.createElement('span', { className: "text-xs text-slate-400 ml-1" }, `${rot}°`)
+                            ]),
+                            React.createElement('div', { className: "flex items-center gap-1" }, [
+                                React.createElement('button', { className: "px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded hover:bg-slate-700", onClick: ()=>{ const c=canvasRef.current; if(c) fitToCanvas(rot, c.clientWidth, c.clientHeight, 'ALL'); } }, 'Fit全体'),
+                                React.createElement('button', { className: "px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded hover:bg-slate-700 disabled:opacity-50", disabled: lockedPoly==null, onClick: ()=>{ const c=canvasRef.current; if(c) fitToCanvas(rot, c.clientWidth, c.clientHeight, 'LOCKED'); } }, 'Fitロック')
+                            ]),
+                            React.createElement('div', { className: "flex items-center gap-1" }, [
+                                React.createElement('span', { className: "text-xs text-slate-400" }, '単位'),
+                                React.createElement('input', { type:'number', step:0.01, value:unitScale, onChange:(e)=>setUnitScale(parseFloat(e.target.value)||1), className:"w-20 bg-slate-900 text-white border border-slate-700 rounded px-2 py-1 text-xs" })
+                            ]),
+                            // 画面/DXF切替はヘッダーから削除（既定は画面に固定）
+                            React.createElement('div', { className: "flex items-center gap-2 ml-auto" }, [
+                                React.createElement('label', { className: "inline-flex items-center gap-1 text-xs" }, [
+                                    React.createElement('input', { type:'checkbox', checked:showLabels, onChange:(e)=>setShowLabels(e.target.checked) }), 'ラベル'
+                                ]),
+                                React.createElement('label', { className: "inline-flex items-center gap-1 text-xs" }, [
+                                    React.createElement('input', { type:'checkbox', checked:showGuides, onChange:(e)=>setShowGuides(e.target.checked) }), 'ガイド'
+                                ]),
+                                React.createElement('label', { className: "inline-flex items-center gap-1 text-xs" }, [
+                                    React.createElement('input', { type:'checkbox', checked:showAccuracyTag, onChange:(e)=>setShowAccuracyTag(e.target.checked) }), '精度タグ'
+                                ]),
+                                null,
+                                blockNames.length>0 && React.createElement(React.Fragment, {}, [
+                                    React.createElement('select', { value:selectedBlock, onChange:(e)=>setSelectedBlock(e.target.value), onDoubleClick:()=>beginRename(selectedBlock), className:"bg-slate-900 text-white border border-slate-700 rounded px-2 py-1 text-xs" }, [
+                                        React.createElement('option', { key:'ALL', value:'ALL' }, 'ALL'),
+                                        ...blockNames.map((bn)=>React.createElement('option', { key:bn, value:bn }, displayName(bn)))
+                                    ]),
+                                    renameTarget && renameTarget===selectedBlock && selectedBlock!=='ALL' && React.createElement('div', { className:'ml-2' }, (
+                                        React.createElement('input', { ref:renameInputRef, value:renameValue, onChange:(e)=>setRenameValue(e.target.value), onKeyDown:(e)=>{ if(e.key==='Enter') commitRename(); if(e.key==='Escape') cancelRename(); }, className:'w-40 bg-slate-900 text-white border border-slate-700 rounded px-2 py-1 text-xs select-text', placeholder:'新しいパーツ名（Enter確定）' })
+                                    )),
+                                    // パーツ回転コントロール（選択中ブロックのみ）
+                                    selectedBlock!=='ALL' && React.createElement('div', { className:'ml-2 flex items-center gap-1' }, [
+                                        React.createElement('button', { className: "px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded hover:bg-slate-700", onClick: ()=> setBlockRot(prev=>{ const n=selectedBlock; const v=(((prev[n]||0)+90)%360); return { ...prev, [n]: v }; }) }, '↺部品'),
+                                        React.createElement('button', { className: "px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded hover:bg-slate-700", onClick: ()=> setBlockRot(prev=>{ const n=selectedBlock; const v=(((prev[n]||0)-90)%360+360)%360; return { ...prev, [n]: v }; }) }, '↻部品'),
+                                        React.createElement('button', { className: "px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded hover:bg-slate-700", onClick: ()=> setBlockRot(prev=>{ const n=selectedBlock; const next = { ...prev }; next[n] = 0; return next; }) }, '部品0°'),
+                                        React.createElement('span', { className:'text-xs text-slate-400 ml-1' }, `${getBlockRot(selectedBlock)}°`)
+                                    ])
+                                ]),
+                                React.createElement('label', { className: "inline-flex items-center gap-1 text-xs" }, [
+                                    React.createElement('input', { type:'checkbox', checked:lockToPoly, onChange:(e)=>{ setLockToPoly(e.target.checked); if(!e.target.checked) setLockedPoly(null); } }), '同一ポリラインにロック'
+                                ]),
+                                React.createElement('button', { className:"px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded hover:bg-slate-700 disabled:opacity-50", disabled: lockedPoly==null, onClick:()=>setLockedPoly(null) }, '選択解除'),
+                                React.createElement('button', { className:"px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded hover:bg-slate-700", onClick:()=>{ setLockedPoly(null); setA(null); setB(null);} }, '選択解除＋A/B同時リセット'),
+                                React.createElement('button', { className:"px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded hover:bg-slate-700", onClick:()=>{ setA(null); setB(null);} }, 'A/Bリセット'),
+                                React.createElement('button', { className:"px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded hover:bg-slate-700", onClick:()=>setShowLog((v)=>!v) }, showLog?'ログ▲':'ログ▼'),
+                                React.createElement('button', { className:"px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded hover:bg-slate-700", onClick:()=>setLogDock((m)=>{ const next = (m==='docked' ? 'floating' : 'docked'); setShowLog(true); return next; }) }, logDock==='docked' ? 'ログPOP' : 'ドック')
+                            ])
+                        ])
+                    ),
+                    React.createElement('canvas', {
+                        ref: canvasRef,
+                        className: "w-full h-full block",
+                        style: { cursor },
+                        onClick: onClickCanvas,
+                        // onWheel is handled by an explicit non-passive listener for preventDefault
+                        onMouseDown: onMouseDown,
+                        onMouseMove: onMouseMove,
+                        onMouseUp: onMouseUp,
+                        onMouseLeave: onMouseUp
+                    }),
+                    // モードヒント
+                    React.createElement('div', { className: "absolute top-14 left-2 px-2 py-1 text-xs bg-slate-900/80 border border-slate-700 rounded text-slate-200 pointer-events-none select-none" }, (()=>{
+                        if (isDragging) return 'モード: パン';
+                        if (lockToPoly && lockedPoly === null) return 'モード: ポリライン選択';
+                        if (!A) return 'モード: A点選択';
+                        if (!B) return `モード: B点選択${constrainFromA ? (constraintDir === 'H' ? '（水平）' : (constraintDir === 'V' ? '（垂直）' : '（水平/垂直）')) : ''}`;
+                        return 'モード: A点再選択';
+                    })()),
+                    // 計測の要約（右上）
+                    A && B && result && React.createElement('div', { className: "absolute top-14 right-2 bg-slate-900/80 border border-slate-700 rounded px-3 py-2 text-xs space-y-1" }, [
+                        React.createElement('div', {}, [`A(${A.pt.x.toFixed(2)},${A.pt.y.toFixed(2)}) → B(${B.pt.x.toFixed(2)},${B.pt.y.toFixed(2)})`]),
+                        React.createElement('div', {}, ['幅: ', React.createElement('span', { className: 'font-medium' }, fmt(Math.abs(result.dx)))]),
+                        React.createElement('div', {}, ['丈: ', React.createElement('span', { className: 'font-medium' }, fmt(Math.abs(result.dy)))]),
+                        React.createElement('div', {}, ['直線距離: ', React.createElement('span', { className: 'font-medium' }, fmt(result.straight))]),
+                        result.along?.samePoly && React.createElement('div', {}, ['沿い距離(短): ', React.createElement('span', { className: 'font-medium' }, fmt(result.along.minor))])
+                    ]),
+                    // ログドロワー（下部）: ドック時のみ（前面・固定表示）
+                    showLog && logDock==='docked' && React.createElement('div', { className: "bg-slate-950/90 border-t border-slate-800 max-h-56 overflow-y-auto sidebar-scroll shadow-lg", style: { position:'fixed', left:'0px', right:'0px', bottom:'8px', zIndex: 40 } }, [
+                        React.createElement('div', { className: "flex items-center justify-between px-3 py-2 text-xs" }, [
+                            React.createElement('span', { className: "font-medium" }, `計測ログ (${measureLog.length})`),
+                            React.createElement('div', { className: "flex items-center gap-2" }, [
+                                React.createElement('button', { className: "px-2 py-1 bg-slate-800 border border-slate-700 rounded", onClick: ()=>setMeasureLog([]) }, 'クリア'),
+                                React.createElement('button', { className: "px-2 py-1 bg-slate-800 border border-slate-700 rounded", onClick: ()=>setShowLog(false) }, '閉じる')
+                            ])
+                        ]),
+                        React.createElement('div', { className: "px-3 pb-3 space-y-2" }, (
+                            measureLog.length===0
+                                ? React.createElement('div', { className: "text-slate-500" }, 'まだ計測はありません')
+                                : measureLog.map((m, idx) => (
+                                    React.createElement('div', { key: m.id, className: "p-2 bg-slate-900 border border-slate-800 rounded text-xs" }, [
+                                        React.createElement('div', { className: "text-slate-400 mb-1 flex items-center justify-between" }, [
+                                            `#${measureLog.length - idx}・${new Date(m.time).toLocaleTimeString()}`,
+                                            React.createElement('button', { className:'ml-2 px-2 py-0.5 text-[10px] bg-red-700/80 hover:bg-red-700 border border-red-800 rounded text-white', onClick:()=>deleteLog(m.id) }, '削除')
+                                        ]),
+                                        (m.origName || m.partName) && React.createElement('div', { className: 'text-slate-400 flex items-center gap-2' }, [
+                                            'パーツ: ',
+                                            React.createElement('span', { className:'inline-block px-2 py-1 bg-slate-900 border border-slate-700 rounded cursor-text', onDoubleClick:()=> m.origName && beginRename(m.origName) }, m.origName ? displayName(m.origName) : (m.partName||''))
+                                        ]),
+                                        (renameTarget && m.origName && renameTarget===m.origName) && React.createElement('div', { className:'mt-1' }, (
+                                                React.createElement('input', { ref:renameInputRef, value:renameValue, onChange:(e)=>setRenameValue(e.target.value), onKeyDown:(e)=>{ if(e.key==='Enter') commitRename(); if(e.key==='Escape') cancelRename(); }, className:'w-full bg-slate-900 text-white border border-slate-700 rounded px-2 py-1 select-text', placeholder:'新しいパーツ名（Enter確定）' })
+                                        )),
+                                        React.createElement('div', {}, [`幅: `, React.createElement('span', { className: 'font-medium' }, fmt(m.width)), ' / 丈: ', React.createElement('span', { className: 'font-medium' }, fmt(m.length))]),
+                                        React.createElement('div', {}, [`直線距離: `, React.createElement('span', { className: 'font-medium' }, fmt(m.straight))]),
+                                        React.createElement('div', {}, [`沿い距離: `, React.createElement('span', { className: 'font-medium' }, m.along==null?'—':fmt(m.along))]),
+                                        React.createElement('div', { className:'mt-1' }, [
+                                            React.createElement('label', { className:'text-xs text-slate-400 mr-2' }, '部位'),
+                                            React.createElement('input', { value:m.note||'', onChange:(e)=>updateLogNote(m.id, e.target.value), className:'w-full bg-slate-900 text-white border border-slate-700 rounded px-2 py-1 text-xs', placeholder:'例：股ぐり、肩線、脇線 など' })
+                                        ])
+                                    ])
+                                ))
+                        ))
+                    ]),
+                    // フローティングログ（Portal）: フロート時のみ
+                    (logDock==='floating' && showLog) && ReactDOM.createPortal(
+                        React.createElement('div', {
+                            ref: floatingContainerRef,
+                            style: { position:'fixed', left: `${Number.isFinite(logRect.x)?logRect.x:0}px`, top: `${Number.isFinite(logRect.y)?logRect.y:0}px`, width: `${Number.isFinite(logRect.w)?logRect.w:360}px`, height: `${Number.isFinite(logRect.h)?logRect.h:240}px`, zIndex: 50 },
+                            className: 'bg-slate-950/95 border border-slate-800 rounded shadow-lg flex flex-col select-none text-slate-200'
+                        }, [
+                            React.createElement('div', {
+                                className: 'px-3 py-2 text-sm bg-slate-900 border-b border-slate-800 cursor-move flex items-center justify-between rounded-t text-slate-200',
+                                onMouseDown: (e)=>{ 
+                                    // ボタン等をクリックしたときはドラッグ開始しない
+                                    if (e.button !== 0) return; 
+                                    const t = e.target;
+                                    if (t && typeof t.closest === 'function' && t.closest('button')) return;
+                                    e.preventDefault(); 
+                                    floatingDrag.current = { dx: e.clientX - (Number.isFinite(logRect.x)?logRect.x:0), dy: e.clientY - (Number.isFinite(logRect.y)?logRect.y:0) };
+                                }
+                            }, [
+                                React.createElement('span', { className: 'font-medium' }, `計測ログ (${measureLog.length})`),
+                                React.createElement('div', { className: 'flex items-center gap-2' }, [
+                                    React.createElement('button', { className: 'px-2 py-1 bg-emerald-700/80 hover:bg-emerald-700 border border-emerald-800 rounded', onClick: exportCsv }, 'CSV'),
+                                    React.createElement('button', { className: 'px-2 py-1 bg-slate-800 border border-slate-700 rounded', onClick: ()=>setMeasureLog([]) }, 'クリア'),
+                                    React.createElement('button', { className: 'px-2 py-1 bg-slate-800 border border-slate-700 rounded', onClick: ()=>{ setLogDock('docked'); setShowLog(true); } }, 'ドックに戻す'),
+                                    React.createElement('button', { className: 'px-2 py-1 bg-slate-800 border border-slate-700 rounded', onClick: ()=>setShowLog(false) }, '閉じる')
+                                ])
+                            ]),
+                            React.createElement('div', { className: 'flex-1 overflow-auto p-3 space-y-2 text-sm sidebar-scroll text-slate-200' }, (
+                                measureLog.length===0
+                                    ? React.createElement('div', { className: 'text-slate-500' }, 'まだ計測はありません')
+                                    : measureLog.map((m, idx) => (
+                                        React.createElement('div', { key: m.id, className: 'p-2 bg-slate-900 border border-slate-800 rounded' }, [
+                                            React.createElement('div', { className: 'text-slate-400 mb-1 flex items-center justify-between' }, [
+                                                `#${measureLog.length - idx}・${new Date(m.time).toLocaleTimeString()}`,
+                                                React.createElement('button', { className:'ml-2 px-2 py-0.5 text-[10px] bg-red-700/80 hover:bg-red-700 border border-red-800 rounded text-white', onClick:()=>deleteLog(m.id) }, '削除')
+                                            ]),
+                                            (m.origName || m.partName) && React.createElement('div', { className: 'text-slate-400 flex items-center gap-2' }, [
+                                                'パーツ: ',
+                                                React.createElement('span', { className:'inline-block px-2 py-1 bg-slate-900 border border-slate-700 rounded cursor-text', onDoubleClick:()=> m.origName && beginRename(m.origName) }, m.origName ? displayName(m.origName) : (m.partName||''))
+                                            ]),
+                                            (renameTarget && m.origName && renameTarget===m.origName) && React.createElement('div', { className:'mt-1' }, (
+                                    React.createElement('input', { ref:renameInputRef, value:renameValue, onChange:(e)=>setRenameValue(e.target.value), onKeyDown:(e)=>{ if(e.key==='Enter') commitRename(); if(e.key==='Escape') cancelRename(); }, className:'w-full bg-slate-900 text-white border border-slate-700 rounded px-2 py-1 text-xs select-text', placeholder:'新しいパーツ名（Enter確定）' })
+                                            )),
+                                            React.createElement('div', {}, [`幅: `, React.createElement('span', { className: 'font-medium' }, fmt(m.width)), ' / 丈: ', React.createElement('span', { className: 'font-medium' }, fmt(m.length))]),
+                                            React.createElement('div', {}, [`直線距離: `, React.createElement('span', { className: 'font-medium' }, fmt(m.straight))]),
+                                            React.createElement('div', {}, [`沿い距離: `, React.createElement('span', { className: 'font-medium' }, m.along==null?'—':fmt(m.along))]),
+                                            React.createElement('div', { className:'mt-1' }, [
+                                                React.createElement('label', { className:'text-xs text-slate-400 mr-2' }, '部位'),
+                                                React.createElement('input', { value:m.note||'', onChange:(e)=>updateLogNote(m.id, e.target.value), className:'w-full bg-slate-900 text-white border border-slate-700 rounded px-2 py-1 text-xs', placeholder:'例：股ぐり、肩線、脇線 など' })
+                                            ])
+                                        ])
+                                    ))
+                            )),
+                            // 縦方向リサイズ（下辺つまみ）
+                            React.createElement('div', {
+                                className: 'absolute left-0 right-0',
+                                style: { bottom: 0, height: '6px', cursor: 'ns-resize' },
+                                onMouseDown: (e)=>{ e.stopPropagation(); floatingResize.current = { startX: e.clientX, startY: e.clientY, startW: logRect.w, startH: logRect.h, mode: 'y' }; }
+                            }),
+                            // 斜め（幅・高さ）リサイズ（右下グリップ）
+                            React.createElement('div', {
+                                className: 'absolute right-0 bottom-0 w-4 h-4 cursor-nwse-resize',
+                                onMouseDown: (e)=>{ e.stopPropagation(); floatingResize.current = { startX: e.clientX, startY: e.clientY, startW: logRect.w, startH: logRect.h, mode: 'both' }; }
+                            })
+                        ]),
+                        document.body
+                    )
+                )
+            ]);
+        }
+
+        // レンダリング
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(React.createElement(App));
+    </script>
+</body>
+</html>

@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DXF測定ツール スタートアップガイド - みんなのDXF</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        :root {
+            /* publicguide_colorgroup.jpgのカラーパレット */
+            --primary: #002159;        /* 紺色 */
+            --accent: #f16f8b;         /* ピンク */
+            --accent-light: #ffb8cd;   /* 薄ピンク */
+            --gray: #526076;           /* グレー */
+            --white: #ffffff;
+            --light-bg: #f8f9fa;
+            --border: #e0e4e8;
+            --text: #2c3e50;
+            --shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.1);
+            --shadow-lg: 0 10px 40px -5px rgba(0, 0, 0, 0.15);
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+            line-height: 1.7;
+            color: var(--text);
+            background: linear-gradient(135deg, var(--accent-light) 0%, var(--white) 50%, var(--light-bg) 100%);
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        
+        .header {
+            background: var(--white);
+            border-radius: 16px;
+            padding: 48px;
+            margin-bottom: 32px;
+            box-shadow: var(--shadow-lg);
+            text-align: center;
+            position: relative;
+        }
+        
+        .logo {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 80px;
+            height: 80px;
+            opacity: 0.9;
+        }
+        
+        h1 {
+            font-size: 2.5rem;
+            color: var(--primary);
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+        
+        .subtitle {
+            font-size: 1.1rem;
+            color: var(--gray);
+            margin-bottom: 20px;
+        }
+        
+        .version-badge {
+            display: inline-block;
+            background: var(--accent);
+            color: var(--white);
+            padding: 6px 16px;
+            border-radius: 24px;
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
+        
+        .quick-start {
+            background: var(--white);
+            border-radius: 16px;
+            padding: 40px;
+            margin-bottom: 32px;
+            box-shadow: var(--shadow);
+        }
+        
+        h2 {
+            color: var(--primary);
+            font-size: 1.75rem;
+            margin-bottom: 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .step-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 24px;
+            margin-top: 32px;
+        }
+        
+        .step-card {
+            background: var(--light-bg);
+            padding: 24px;
+            border-radius: 12px;
+            border-left: 4px solid var(--accent);
+            position: relative;
+        }
+        
+        .step-number {
+            position: absolute;
+            top: -12px;
+            left: 20px;
+            background: var(--accent);
+            color: var(--white);
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+        }
+        
+        h3 {
+            color: var(--primary);
+            font-size: 1.25rem;
+            margin-bottom: 12px;
+            margin-top: 8px;
+        }
+        
+        /* こんな方におすすめセクション */
+        .recommend-section {
+            background: var(--white);
+            border-radius: 16px;
+            padding: 48px 40px;
+            margin-bottom: 32px;
+            box-shadow: var(--shadow);
+        }
+        
+        .recommend-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 32px;
+            margin-top: 40px;
+        }
+        
+        .recommend-card {
+            text-align: center;
+            padding: 20px;
+            transition: transform 0.3s ease;
+        }
+        
+        .recommend-card:hover {
+            transform: translateY(-5px);
+        }
+        
+        .recommend-icon {
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 20px;
+            background: var(--light-bg);
+            border-radius: 50%;
+            transition: all 0.3s ease;
+        }
+        
+        .recommend-card:hover .recommend-icon {
+            background: linear-gradient(135deg, var(--accent-light), var(--white));
+            transform: scale(1.1);
+        }
+        
+        .recommend-card h3 {
+            color: var(--primary);
+            font-size: 1.1rem;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        
+        .recommend-card p {
+            color: var(--gray);
+            font-size: 0.95rem;
+            line-height: 1.5;
+        }
+        
+        .tab-container {
+            background: var(--white);
+            border-radius: 16px;
+            padding: 0;
+            margin-bottom: 32px;
+            box-shadow: var(--shadow);
+            overflow: hidden;
+        }
+        
+        .tab-nav {
+            display: flex;
+            background: var(--light-bg);
+            border-bottom: 2px solid var(--border);
+        }
+        
+        .tab-button {
+            flex: 1;
+            padding: 16px 24px;
+            background: transparent;
+            border: none;
+            color: var(--gray);
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+        
+        .tab-button:hover {
+            background: rgba(241, 111, 139, 0.1);
+        }
+        
+        .tab-button.active {
+            color: var(--primary);
+            background: var(--white);
+        }
+        
+        .tab-button.active::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--accent);
+        }
+        
+        .tab-content {
+            padding: 40px;
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .feature-grid {
+    display: grid;
+    /* Responsive grid: cards adjust to screen width while aiming for up to 3 columns */
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 20px;
+    margin-top: 24px;
+        }
+        
+        .feature-card {
+            background: var(--light-bg);
+            padding: 20px;
+            border-radius: 12px;
+            border-top: 3px solid var(--accent-light);
+        }
+
+        /* Subtle hover effect for feature cards on desktop devices */
+        .feature-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .feature-card h4 {
+            color: var(--primary);
+            margin-bottom: 12px;
+        }
+        
+        ul {
+            padding-left: 20px;
+            line-height: 2;
+            color: var(--text);
+        }
+        
+        li {
+            margin-bottom: 8px;
+        }
+        
+        code {
+            background: var(--accent-light);
+            color: var(--primary);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        th {
+            background: var(--light-bg);
+            color: var(--primary);
+            font-weight: 600;
+        }
+        
+        .info-box {
+            background: linear-gradient(135deg, var(--accent-light), var(--white));
+            border-left: 4px solid var(--accent);
+            padding: 20px;
+            border-radius: 8px;
+            margin: 24px 0;
+        }
+        
+        .warning-box {
+            background: #fff9e6;
+            border-left: 4px solid #ffc107;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 24px 0;
+        }
+        
+        .footer {
+            background: var(--white);
+            border-radius: 16px;
+            padding: 48px;
+            margin-top: 32px;
+            text-align: center;
+            box-shadow: var(--shadow);
+        }
+        
+        .github-links {
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+            margin: 32px 0;
+            flex-wrap: wrap;
+        }
+        
+        .github-button {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--primary);
+            color: var(--white);
+            padding: 12px 24px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        
+        .github-button:hover {
+            background: var(--accent);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow);
+        }
+        
+        @media (max-width: 768px) {
+            .container { padding: 20px 12px; }
+            h1 { font-size: 1.875rem; }
+            .header { padding: 32px 20px; }
+            .tab-nav { overflow-x: auto; }
+            .logo { width: 60px; height: 60px; }
+            .recommend-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- ヘッダー -->
+        <div class="header">
+            <img src="ICON_worybonbon.png" alt="Logo" class="logo">
+            <h1>DXF測定ツール スタートアップガイド</h1>
+            <p class="subtitle">アパレルCAD用 寸法測定スタンドアロンツール 完全マニュアル</p>
+            <span class="version-badge">バージョン v22.2 | 2025年9月</span>
+        </div>
+
+        <!-- クイックスタート -->
+        <div class="quick-start">
+            <h2>🚀 3分で始める</h2>
+            <div class="step-container">
+                <div class="step-card">
+                    <div class="step-number">1</div>
+                    <h3>ダウンロード</h3>
+                    <ol style="padding-left: 20px;">
+                        <li>GitHubリリースページから最新版をダウンロード</li>
+                        <li><code>dxf-measure-v22.2.html</code> を保存</li>
+                        <li>デスクトップ等のアクセスしやすい場所に配置</li>
+                    </ol>
+                </div>
+                
+                <div class="step-card">
+                    <div class="step-number">2</div>
+                    <h3>起動</h3>
+                    <ol style="padding-left: 20px;">
+                        <li>HTMLファイルをダブルクリック</li>
+                        <li>ブラウザが自動的に起動</li>
+                        <li>測定ツールの画面が表示</li>
+                    </ol>
+                </div>
+                
+                <div class="step-card">
+                    <div class="step-number">3</div>
+                    <h3>DXF読み込み</h3>
+                    <ol style="padding-left: 20px;">
+                        <li>ファイルをブラウザにドラッグ&ドロップ</li>
+                        <li>または「ファイル選択」ボタンから読み込み</li>
+                        <li>図面が自動表示される</li>
+                    </ol>
+                </div>
+            </div>
+        </div>
+
+        <!-- こんな方におすすめ -->
+        <div class="recommend-section">
+            <h2 style="text-align: center; color: var(--accent); margin-bottom: 8px;">
+                <span style="font-size: 1.5em;">🎯</span> こんな方におすすめ
+            </h2>
+            
+            <div class="recommend-grid">
+                <div class="recommend-card">
+                    <div class="recommend-icon">
+                        <svg width="60" height="60" viewBox="0 0 60 60" fill="none">
+                            <rect x="10" y="15" width="40" height="30" rx="2" stroke="#002159" stroke-width="2"/>
+                            <path d="M20 15 L20 5 Q20 3 22 3 L38 3 Q40 3 40 5 L40 15" stroke="#002159" stroke-width="2"/>
+                            <circle cx="30" cy="30" r="8" fill="#f16f8b" opacity="0.3"/>
+                            <path d="M30 26 L30 34 M26 30 L34 30" stroke="#f16f8b" stroke-width="2"/>
+                        </svg>
+                    </div>
+                    <h3>アパレル企業</h3>
+                    <p>高額なCADソフトなしで寸法測定が可能</p>
+                </div>
+                
+                <div class="recommend-card">
+                    <div class="recommend-icon">
+                        <svg width="60" height="60" viewBox="0 0 60 60" fill="none">
+                            <path d="M10 25 Q10 20 15 20 L45 20 Q50 20 50 25 L50 40 L10 40 Z" stroke="#002159" stroke-width="2"/>
+                            <path d="M5 40 L55 40 L50 50 L10 50 Z" stroke="#002159" stroke-width="2"/>
+                            <circle cx="20" cy="30" r="3" fill="#f16f8b"/>
+                            <circle cx="30" cy="30" r="3" fill="#f16f8b"/>
+                            <circle cx="40" cy="30" r="3" fill="#f16f8b"/>
+                        </svg>
+                    </div>
+                    <h3>パタンナー</h3>
+                    <p>フリーランスでも本格的な測定ツールを</p>
+                </div>
+                
+                <div class="recommend-card">
+                    <div class="recommend-icon">
+                        <svg width="60" height="60" viewBox="0 0 60 60" fill="none">
+                            <path d="M30 10 L45 20 L45 35 L30 45 L15 35 L15 20 Z" stroke="#002159" stroke-width="2" fill="#ffb8cd" opacity="0.3"/>
+                            <rect x="25" y="8" width="10" height="4" fill="#002159"/>
+                            <circle cx="30" cy="28" r="8" stroke="#f16f8b" stroke-width="2" fill="white"/>
+                        </svg>
+                    </div>
+                    <h3>学生・教育機関</h3>
+                    <p>学習用に最適な無料ツール</p>
+                </div>
+                
+                <div class="recommend-card">
+                    <div class="recommend-icon">
+                        <svg width="60" height="60" viewBox="0 0 60 60" fill="none">
+                            <rect x="8" y="20" width="15" height="25" fill="#ffb8cd" opacity="0.5"/>
+                            <rect x="27" y="15" width="15" height="30" fill="#f16f8b" opacity="0.5"/>
+                            <rect x="46" y="10" width="15" height="35" fill="#002159" opacity="0.8"/>
+                            <path d="M8 50 L52 50" stroke="#526076" stroke-width="2"/>
+                        </svg>
+                    </div>
+                    <h3>生産管理</h3>
+                    <p>現場での寸法確認作業を効率化</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- タブコンテンツ -->
+        <div class="tab-container">
+            <div class="tab-nav">
+                <button class="tab-button active" onclick="showTab('basic')">基本操作</button>
+                <button class="tab-button" onclick="showTab('advanced')">詳細機能</button>
+                <button class="tab-button" onclick="showTab('tips')">活用のコツ</button>
+                <button class="tab-button" onclick="showTab('export')">書き出し機能</button>
+                <button class="tab-button" onclick="showTab('security')">セキュリティ</button>
+            </div>
+
+            <!-- タブ1: 基本操作 -->
+            <div id="basic" class="tab-content active">
+                <h2>基本操作</h2>
+                
+                <h3>測定の基本</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>操作</th>
+                            <th>方法</th>
+                            <th>用途</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>沿い距離測定</strong></td>
+                            <td>線分をクリック → 測定開始</td>
+                            <td>袖ぐり、衿ぐりなどカーブの実寸</td>
+                        </tr>
+                        <tr>
+                            <td><strong>直線距離測定</strong></td>
+                            <td>A点クリック → B点クリック</td>
+                            <td>2点間の直線距離</td>
+                        </tr>
+                        <tr>
+                            <td><strong>幅/丈測定</strong></td>
+                            <td>幅/丈ボタン → 測定</td>
+                            <td>水平・垂直方向の寸法</td>
+                        </tr>
+                        <tr>
+                            <td><strong>測定キャンセル</strong></td>
+                            <td>ESCキー</td>
+                            <td>測定中の操作を中止</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3 style="margin-top: 24px;">測定値の見方</h3>
+                <div class="info-box">
+                    <p><strong>① 沿い距離（青太線）</strong><br>
+                    カーブに沿った実際の長さ。袖ぐりや衿ぐりの実寸測定に使用。</p>
+                    
+                    <p style="margin-top: 12px;"><strong>② 直線距離（灰点線）</strong><br>
+                    A点からB点への直線距離。</p>
+                    
+                    <p style="margin-top: 12px;"><strong>③ 幅/丈（橙L字）</strong><br>
+                    水平方向の幅と垂直方向の丈。画面基準またはDXF座標基準で切替可能。</p>
+                </div>
+            </div>
+
+            <!-- タブ2: 詳細機能 -->
+            <div id="advanced" class="tab-content">
+                <h2>詳細機能</h2>
+
+                <h3>パーツ管理</h3>
+                <ul>
+                    <li>ブロック（パーツ）ごとの表示切替</li>
+                    <li>パーツ名の変更（ダブルクリックで編集）</li>
+                    <li>パーツごとの回転（90度単位）</li>
+                    <li>設定は図面ごとに自動保存</li>
+                </ul>
+
+                <h3 style="margin-top: 24px;">測定ログ</h3>
+                <ul>
+                    <li>全測定履歴を自動記録</li>
+                    <li>部位メモの追加（股ぐり、肩線など）</li>
+                    <li>CSV形式での書き出し</li>
+                    <li>ドック表示/フローティング表示の切替</li>
+                </ul>
+
+                <h3 style="margin-top: 24px;">便利な機能</h3>
+                <div class="feature-grid">
+                    <div class="feature-card">
+                        <h4>🔒 同一ポリラインロック</h4>
+                        <p>測定したい線分だけを選択可能。重なった線がある場合に便利。</p>
+                    </div>
+                    <div class="feature-card">
+                        <h4>🔄 画面回転</h4>
+                        <p>90度単位で画面を回転。作業しやすい向きに調整可能。</p>
+                    </div>
+                    <div class="feature-card">
+                        <h4>⌨️ ショートカット</h4>
+                        <p>Shift+クリックで水平/垂直制約、ESCでキャンセルなど。</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- タブ3: 活用のコツ -->
+            <div id="tips" class="tab-content">
+                <h2>活用のコツ</h2>
+
+                <h3>アパレル現場での使い方</h3>
+                <div class="info-box">
+                    <p><strong>🎯 袖ぐり・衿ぐり測定</strong><br>
+                    沿い距離測定でカーブの実寸を正確に測定。パターンメイキングの必須機能。</p>
+                    
+                    <p style="margin-top: 12px;"><strong>📏 着丈・身幅測定</strong><br>
+                    幅/丈測定で基本寸法を素早く確認。仕様書作成に便利。</p>
+                    
+                    <p style="margin-top: 12px;"><strong>📝 部位メモ活用</strong><br>
+                    測定ログに「前股ぐり」「後肩線」などメモを追加して管理。</p>
+                </div>
+
+                <h3 style="margin-top: 24px;">効率的な作業フロー</h3>
+                <ol>
+                    <li><strong>パーツ名設定</strong>：最初に前身頃、後身頃などパーツ名を設定</li>
+                    <li><strong>ロック機能活用</strong>：同一ポリラインロックONで測定対象を限定</li>
+                    <li><strong>測定実施</strong>：必要な箇所を順次測定</li>
+                    <li><strong>ログ確認</strong>：測定ログで数値確認、部位メモ追加</li>
+                    <li><strong>CSV出力</strong>：Excel等で活用</li>
+                </ol>
+
+                <div class="warning-box">
+                    <strong>💡 おすすめ設定</strong><br>
+                    「同一ポリラインにロック」をONにすると、測定したい線だけを選択できます。<br>
+                    重なった線がある場合に特に便利です！
+                </div>
+            </div>
+
+            <!-- タブ4: 書き出し機能 -->
+            <div id="export" class="tab-content">
+                <h2>書き出し機能</h2>
+
+                <div class="feature-grid">
+                    <div class="feature-card">
+                        <h4>📊 CSV出力</h4>
+                        <ul style="padding-left: 20px;">
+                            <li>測定ログの一括出力</li>
+                            <li>Excel対応形式</li>
+                            <li>日本語対応（BOM付き）</li>
+                        </ul>
+                    </div>
+                    <div class="feature-card">
+                        <h4>🎨 SVG出力</h4>
+                        <ul style="padding-left: 20px;">
+                            <li>ベクター形式</li>
+                            <li>Illustrator対応</li>
+                            <li>1:1 / 1:10 スケール</li>
+                        </ul>
+                    </div>
+                    <div class="feature-card">
+                        <h4>🖼️ PNG出力</h4>
+                        <ul style="padding-left: 20px;">
+                            <li>透過背景対応</li>
+                            <li>高解像度出力</li>
+                            <li>資料作成用</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <h3 style="margin-top: 24px;">単位スケール設定</h3>
+                <div class="warning-box" style="margin-bottom: 20px;">
+                    <strong>⚠️ 書き出し時の注意事項</strong><br>
+                    • 画面回転は表示のみで、書き出し（SVG/PNG）には反映されません<br>
+                    • 大規模なファイルでは書き出しに時間がかかる場合があります<br>
+                    • ブラウザによって書き出し品質が異なる場合があります
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>DXFの単位</th>
+                            <th>出力したい単位</th>
+                            <th>設定値</th>
+                            <th>計算式</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>mm</td>
+                            <td>mm</td>
+                            <td><strong>1</strong></td>
+                            <td>等倍</td>
+                        </tr>
+                        <tr>
+                            <td>mm</td>
+                            <td>cm</td>
+                            <td><strong>0.1</strong></td>
+                            <td>mm × 0.1 = cm</td>
+                        </tr>
+                        <tr>
+                            <td>cm</td>
+                            <td>mm</td>
+                            <td><strong>10</strong></td>
+                            <td>cm × 10 = mm</td>
+                        </tr>
+                        <tr>
+                            <td>inch</td>
+                            <td>mm</td>
+                            <td><strong>25.4</strong></td>
+                            <td>inch × 25.4 = mm</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- タブ5: セキュリティ -->
+            <div id="security" class="tab-content">
+                <h2>セキュリティについて</h2>
+
+                <h3>データの取り扱い</h3>
+                <div class="info-box">
+                    <p><strong>📍 ローカル完結型の動作</strong><br>
+                    このツールはお使いのブラウザ内だけで動作します。インターネット接続は不要で、外部サーバーとの通信は行いません。</p>
+                    
+                    <p style="margin-top: 12px;"><strong>🔒 データの保存場所</strong><br>
+                    図面データや測定結果は、ブラウザのローカルストレージ（お使いのPC内）にのみ保存されます。クラウドへのアップロードは行われません。</p>
+                    
+                    <p style="margin-top: 12px;"><strong>📂 ファイルの処理</strong><br>
+                    DXFファイルはブラウザのメモリ上で処理され、処理後は自動的に破棄されます。</p>
+                </div>
+
+                <h3 style="margin-top: 24px;">企業でご利用の場合</h3>
+                <div class="info-box" style="background: linear-gradient(135deg, #f0f8ff, white);">
+                    <p><strong>🖥️ 推奨動作環境</strong><br>
+                    • ブラウザ：Chrome/Edge（推奨）、Firefox、Safari<br>
+                    • OS：Windows 10以降、macOS 10.15以降<br>
+                    • メモリ：4GB以上推奨<br>
+                    • オフライン動作：可能（初回読み込み後）</p>
+                </div>
+                <table style="margin-top: 20px;">
+                    <thead>
+                        <tr>
+                            <th>確認項目</th>
+                            <th>状況</th>
+                            <th>補足説明</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>外部通信</strong></td>
+                            <td>なし</td>
+                            <td>ネットワークを遮断した環境でも動作可能です</td>
+                        </tr>
+                        <tr>
+                            <td><strong>インストール</strong></td>
+                            <td>不要</td>
+                            <td>HTMLファイル1個のみ、レジストリ変更なし</td>
+                        </tr>
+                        <tr>
+                            <td><strong>管理者権限</strong></td>
+                            <td>不要</td>
+                            <td>一般ユーザー権限で実行可能</td>
+                        </tr>
+                        <tr>
+                            <td><strong>ソースコード</strong></td>
+                            <td>公開</td>
+                            <td>GitHubで全コードを確認できます</td>
+                        </tr>
+                        <tr>
+                            <td><strong>ライセンス</strong></td>
+                            <td>Apache 2.0</td>
+                            <td>商用利用・改変・再配布が可能</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3 style="margin-top: 24px;">よくあるご質問</h3>
+                <div class="feature-grid">
+                    <div class="feature-card">
+                        <h4>❓ どのCADのDXFに対応？</h4>
+                        <p>一般的なアパレルCADが出力するDXF形式に対応。パターンのカーブはポリラインとして処理され、袖ぐりや衿ぐりの沿い距離を正確に測定できます。</p>
+                    </div>
+                    <div class="feature-card">
+                        <h4>❓ カーブの測定はできる？</h4>
+                        <p>はい、ポリライン形式のカーブは沿い距離測定で実寸を計測可能。ただし円弧（ARC）やスプライン（SPLINE）は直線近似で表示される場合があります。</p>
+                    </div>
+                    <div class="feature-card">
+                        <h4>❓ 機密図面を扱っても大丈夫？</h4>
+                        <p>図面データは外部に送信されることはありません。ただし、お使いのPCのセキュリティ状態もご確認ください。</p>
+                    </div>
+                    <div class="feature-card">
+                        <h4>❓ IT部門の承認は必要？</h4>
+                        <p>社内規定によって異なります。HTMLファイルの実行に関する規定をご確認ください。</p>
+                    </div>
+                    <div class="feature-card">
+                        <h4>❓ セキュリティリスクは？</h4>
+                        <p>公式リポジトリから入手すれば、一般的なセキュリティリスクは低いです。改変されたファイルにはご注意ください。</p>
+                    </div>
+                    <div class="feature-card">
+                        <h4>❓ データはどこに保存される？</h4>
+                        <p>設定や測定ログはブラウザのローカルストレージ（お使いのPC内）に保存。容量制限により古いデータが削除される場合があります。</p>
+                    </div>
+                </div>
+
+                <div class="warning-box" style="margin-top: 24px;">
+                    <strong>💡 IT担当者の方へ</strong><br>
+                    このツールはJavaScriptで記述されたクライアントサイドアプリケーションです。<br>
+                    以下の技術仕様をご確認いただけます：<br>
+                    • 使用ライブラリ：DXFパーサー（ローカル処理用）<br>
+                    • 外部API：使用していません<br>
+                    • Cookie：使用していません<br>
+                    • WebSocket：使用していません<br>
+                    詳細はGitHubのソースコードをご確認ください。
+                </div>
+
+                <h3 style="margin-top: 24px;">透明性への取り組み</h3>
+                <ul>
+                    <li><strong>オープンソース</strong>：全てのコードをGitHubで公開しています</li>
+                    <li><strong>コミュニティ開発</strong>：修正や改善の履歴が全て記録されています</li>
+                    <li><strong>Issue管理</strong>：問題や要望は公開で記録していますが、対応や回答には時間がかかる場合があります</li>
+                    <li><strong>定期更新</strong>：セキュリティや機能の改善を継続的に実施</li>
+                </ul>
+
+                <div class="info-box" style="margin-top: 24px; background: linear-gradient(135deg, #e8f5e9, white);">
+                    <p><strong>🌱 開発者より</strong><br>
+                    私自身、アパレル業界で働くデザイナーです。現場の不便を解決したくて作りました。<br>
+                    安心してお使いいただけるよう、できる限り透明性を保って開発しています。<br>
+                    要望やバグ報告についてはすぐに対応できない場合があります。デザイナーとして初期アイデアやプロトタイプの提供を重視しており、修正対応には限界がありますことをご了承ください。</p>
+                </div>
+
+                <h3 style="margin-top: 24px;">既知の制約事項</h3>
+                <div class="warning-box">
+                    <strong>📌 現バージョンの制約</strong><br>
+                    • 円弧・スプライン曲線は直線近似で表示されます<br>
+                    • 画面回転は表示のみで、書き出しには反映されません<br>
+                    • 大規模ファイル（10MB以上）では動作が重くなる場合があります<br>
+                    • ローカルストレージの容量制限により、保存データが削除される可能性があります<br>
+                    詳細な対応状況は、GitHubのREADMEをご確認ください。
+                </div>
+            </div>
+        </div>
+
+        <!-- フッター -->
+        <div class="footer">
+            <h2 style="font-size: 1.5rem; margin-bottom: 16px;">
+                🌟 みんなのDXF - オープンソースプロジェクト
+            </h2>
+            <p style="color: var(--gray); margin-bottom: 24px;">
+                このツールは完全無料のオープンソースソフトウェアです。<br>
+                アパレル業界の効率化を支援するため、コミュニティで開発・維持されています。
+            </p>
+            
+            <div class="github-links">
+                <a href="https://github.com/wory-bonbon/minna-no-dxf" class="github-button">
+                    📦 GitHub リポジトリ
+                </a>
+                <a href="https://github.com/wory-bonbon/minna-no-dxf/releases" class="github-button">
+                    📥 最新版ダウンロード
+                </a>
+                <a href="https://github.com/wory-bonbon/minna-no-dxf/issues" class="github-button">
+                    💬 要望・バグ報告
+                </a>
+            </div>
+            
+            <p style="margin-top: 32px; font-size: 0.875rem; color: var(--gray);">
+                DXF測定ツール v22.2 - Apache 2.0 License<br>
+                © 2025 アパレル業界の効率化を支援するオープンソースプロジェクト
+            </p>
+        </div>
+    </div>
+
+    <script>
+        function showTab(tabName) {
+            // すべてのタブコンテンツを非表示
+            const contents = document.querySelectorAll('.tab-content');
+            contents.forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            // すべてのタブボタンの選択状態を解除
+            const buttons = document.querySelectorAll('.tab-button');
+            buttons.forEach(button => {
+                button.classList.remove('active');
+            });
+            
+            // 選択されたタブを表示
+            document.getElementById(tabName).classList.add('active');
+            
+            // 選択されたボタンをアクティブに
+            event.target.classList.add('active');
+        }
+    </script>
+</body>
+</html>
