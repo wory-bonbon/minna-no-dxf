@@ -1,25 +1,16 @@
-﻿# みんなのDXF / Minna-no-DXF
+# みんなのDXF / Minna-no-DXF
 
 DXF 計測ツール **Minna-no-DXF** のリポジトリです。以下はツールの UI の概要です。
 
-![DXF Measure UI](assets/DXF_Measure_UI.png)
+![DXF Measure UI](images/dxf_measure-ui.png)
 
-<!-- ここからアップロードした Markdown の内容を貼り付け -->
+## ドキュメントリンク
 
-# 🎯 みんなのDXF / Minna-no-DXF
+- [ユーザーガイド：基本操作](https://wory-bonbon.github.io/minna-no-dxf/dxf-measure-v41.html)
+- [ユーザーガイド：スナップ精度](https://wory-bonbon.github.io/minna-no-dxf/measure-snap-accuracy-plain-v41.html)
+- [開発者向け機能概要](docs/DEVELOPER_GUIDE.md)
 
-DXF計測ツール **Minna-no-DXF** のリポジトリです。以下はツールのUI概要です。
-
-![DXF Measure UI](images/dxf-measure-ui.png)
-
-## DXF計測ツール v41 開発者向け機能概要
-
-*ユーザーガイドは後日配布予定*
-
-対象: `dxf-measure-v41.html`
-
-本ドキュメントは、同バージョンのスタンドアロン版 DXF 計測ツールに実装されている主要機能をカテゴリ別に整理したものです。
-
+上記リンクからユーザー向けガイドや開発者向け機能概要にアクセスできます。
 ---
 
 ## 🚀 概要
@@ -179,5 +170,3 @@ DXF計測ツール **Minna-no-DXF** のリポジトリです。以下はツー�
 ---
 
 本ドキュメントはバージョン0922-41のコードベースをもとに作成しています。将来の更新でUIや仕様が変更される可能性があります。
-
-<!-- ここまで -->
