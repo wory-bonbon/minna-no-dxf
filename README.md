@@ -4,6 +4,10 @@ DXF 計測ツール **Minna-no-DXF** のリポジトリです。以下はツー�
 
 ![DXF Measure UI](assets/DXF_Measure_UI.png)
 
+![Features and Flow](assets/features_and_flow.png)
+
+![Toolbar and Log Panel](assets/toolbar_and_log_panel.png)
+
 ## ドキュメントリンク
 
 - [ユーザーガイド：基本操作](https://wory-bonbon.github.io/minna-no-dxf/dxf-measure-v41.html)
