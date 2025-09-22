@@ -1,0 +1,1344 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DXF測定ツール スタートアップガイド - みんなのDXF</title>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg-1: #f7d6ff;
+            --bg-2: #c6cdfc;
+            --bg-3: #eef6ff;
+            --primary: #21255c;
+            --primary-soft: rgba(33, 37, 92, 0.75);
+            --text: #1f2243;
+            --muted: #4f5a7d;
+            --accent: #ff7adf;
+            --accent-strong: #8f7bff;
+            --accent-soft: rgba(255, 122, 223, 0.18);
+            --highlight: rgba(144, 226, 255, 0.18);
+            --card-bg: rgba(255, 255, 255, 0.68);
+            --card-border: rgba(255, 255, 255, 0.38);
+            --shadow-soft: 0 35px 70px -30px rgba(36, 30, 70, 0.45);
+            --shadow-medium: 0 25px 50px -25px rgba(36, 30, 70, 0.35);
+            --shadow-light: 0 18px 45px -30px rgba(36, 30, 70, 0.25);
+            --radius-lg: clamp(20px, 3.2vw, 32px);
+            --radius-md: clamp(16px, 2.6vw, 26px);
+            --radius-sm: 14px;
+            --transition: 220ms cubic-bezier(0.22, 0.61, 0.36, 1);
+        }
+
+        html {
+            position: relative;
+            min-height: 100%;
+            background-color: var(--bg-1);
+        }
+
+        html::before {
+            content: "";
+            position: fixed;
+            top: 22vh;
+            left: 50%;
+            transform: translate3d(-50%, 0, 0) rotate(-4deg);
+            width: clamp(520px, 68vw, 940px);
+            height: clamp(520px, 68vw, 940px);
+            pointer-events: none;
+            background:
+                conic-gradient(from 210deg at 50% 50%, rgba(255, 255, 255, 0.05) 0deg, rgba(143, 123, 255, 0.35) 110deg, rgba(255, 122, 223, 0.32) 220deg, rgba(143, 123, 255, 0.45) 360deg);
+            mask-image: radial-gradient(circle at center, rgba(255, 255, 255, 0.95) 28%, transparent 72%);
+            mix-blend-mode: screen;
+            opacity: 0.6;
+            z-index: 0;
+            animation: ribbonFlow 36s ease-in-out infinite alternate;
+        }
+
+        body {
+            font-family: "Poppins", "Hiragino Sans", "Noto Sans JP", "Yu Gothic", "Segoe UI", sans-serif;
+            line-height: 1.75;
+            color: var(--text);
+            background:
+                radial-gradient(circle at 18% 12%, rgba(255, 173, 255, 0.78), transparent 60%),
+                radial-gradient(circle at 82% -6%, rgba(123, 178, 255, 0.72), transparent 66%),
+                conic-gradient(from 120deg at 72% 32%, rgba(255, 122, 223, 0.18) 0deg, rgba(143, 123, 255, 0.12) 135deg, rgba(255, 255, 255, 0) 260deg),
+                linear-gradient(135deg, var(--bg-1) 8%, var(--bg-2) 55%, var(--bg-3) 100%);
+            min-height: 100vh;
+            padding: clamp(32px, 6vw, 72px) 0;
+            position: relative;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        body::before,
+        body::after {
+            content: "";
+            position: fixed;
+            width: clamp(360px, 52vw, 680px);
+            height: clamp(360px, 52vw, 680px);
+            pointer-events: none;
+            mix-blend-mode: screen;
+            filter: blur(0px);
+            z-index: 0;
+        }
+
+        body::before {
+            top: -22vh;
+            left: -18vw;
+            background:
+                radial-gradient(ellipse at 38% 32%, rgba(255, 173, 249, 0.8) 0%, rgba(255, 173, 249, 0.14) 62%, transparent 76%),
+                conic-gradient(from 160deg at 42% 58%, rgba(255, 255, 255, 0.16), rgba(143, 123, 255, 0.42), rgba(255, 122, 223, 0.32), rgba(255, 255, 255, 0)),
+                linear-gradient(120deg, rgba(143, 123, 255, 0.22), rgba(255, 122, 223, 0.12) 55%, rgba(255, 255, 255, 0) 100%);
+            opacity: 0.75;
+            animation: driftOrbA 32s ease-in-out infinite alternate;
+        }
+
+        body::after {
+            bottom: -28vh;
+            right: -20vw;
+            background:
+                radial-gradient(ellipse at 52% 48%, rgba(149, 196, 255, 0.78) 0%, rgba(149, 196, 255, 0.18) 60%, transparent 76%),
+                conic-gradient(from 320deg at 58% 38%, rgba(255, 255, 255, 0.12), rgba(255, 122, 223, 0.34), rgba(143, 123, 255, 0.48), rgba(255, 255, 255, 0)),
+                linear-gradient(140deg, rgba(143, 123, 255, 0.18), rgba(123, 198, 255, 0.18) 55%, rgba(255, 255, 255, 0) 100%);
+            opacity: 0.68;
+            animation: driftOrbB 38s ease-in-out infinite alternate;
+        }
+
+        .container {
+            width: min(1080px, 88vw);
+            margin: 0 auto;
+            position: relative;
+            z-index: 1;
+            display: flex;
+            flex-direction: column;
+            gap: clamp(24px, 3vw, 36px);
+        }
+
+        a {
+            color: var(--accent-strong);
+            text-decoration: none;
+            transition: color var(--transition);
+        }
+
+        a:hover { color: var(--accent); }
+
+        .header,
+        .quick-start,
+        .recommend-section,
+        .tab-container,
+        .footer {
+            background: var(--card-bg);
+            border-radius: var(--radius-lg);
+            padding: clamp(1.8rem, 4vw, 3.2rem);
+            box-shadow: var(--shadow-soft);
+            border: 1px solid var(--card-border);
+            position: relative;
+            overflow: hidden;
+            backdrop-filter: blur(18px);
+        }
+
+        .header::before,
+        .quick-start::before,
+        .recommend-section::before,
+        .tab-container::before,
+        .footer::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at top right, rgba(255, 255, 255, 0.45), transparent 55%);
+            opacity: 0.65;
+            pointer-events: none;
+        }
+
+        .header { text-align: center; }
+
+        .header-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: center;
+            justify-content: center;
+            gap: clamp(24px, 6vw, 56px);
+        }
+
+        .header-text {
+            display: flex;
+            flex-direction: column;
+            gap: clamp(14px, 2.4vw, 20px);
+            align-items: center;
+            text-align: center;
+            max-width: clamp(520px, 58vw, 820px);
+            margin: 0 auto;
+        }
+
+        .header-title {
+            display: flex;
+            flex-direction: column;
+            gap: clamp(6px, 1.4vw, 12px);
+            align-items: center;
+            line-height: 1.08;
+        }
+
+        .title-line {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: clamp(0.06em, 0.8vw, 0.18em);
+            padding: clamp(2px, 0.6vw, 6px) clamp(10px, 2vw, 20px);
+            border-radius: clamp(12px, 2.4vw, 20px);
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.55), rgba(230, 238, 255, 0.35));
+            box-shadow: 0 24px 45px -30px rgba(33, 37, 92, 0.45);
+            transform-origin: center;
+            filter: drop-shadow(0 12px 26px rgba(143, 123, 255, 0.25));
+        }
+
+        .title-char {
+            display: inline-block;
+            font: inherit;
+            letter-spacing: 0.02em;
+            opacity: 0;
+            transform: translate3d(var(--char-x, 0px), var(--char-y, 0px), 0) scale(0.85) rotate(var(--char-rot, 0deg));
+            filter: blur(6px);
+            animation: titleCharEnter var(--char-dur, 0.9s) var(--char-delay, 0s) cubic-bezier(0.22, 0.82, 0.16, 1) forwards;
+        }
+
+        .title-line--primary .title-char:nth-child(1) {
+            --char-x: -120px;
+            --char-y: -70px;
+            --char-rot: -16deg;
+            --char-delay: 60ms;
+            --char-dur: 1.08s;
+        }
+
+        .title-line--primary .title-char:nth-child(2) {
+            --char-x: 30px;
+            --char-y: -140px;
+            --char-rot: 9deg;
+            --char-delay: 110ms;
+            --char-dur: 0.94s;
+        }
+
+        .title-line--primary .title-char:nth-child(3) {
+            --char-x: 140px;
+            --char-y: -40px;
+            --char-rot: 12deg;
+            --char-delay: 0.18s;
+            --char-dur: 1.12s;
+        }
+
+        .title-line--primary .title-char:nth-child(4) {
+            --char-x: -150px;
+            --char-y: 60px;
+            --char-rot: -6deg;
+            --char-delay: 0.26s;
+            --char-dur: 1.02s;
+        }
+
+        .title-line--primary .title-char:nth-child(5) {
+            --char-x: 20px;
+            --char-y: 130px;
+            --char-rot: 5deg;
+            --char-delay: 0.34s;
+            --char-dur: 0.9s;
+        }
+
+        .title-line--primary .title-char:nth-child(6) {
+            --char-x: 160px;
+            --char-y: 40px;
+            --char-rot: 14deg;
+            --char-delay: 0.42s;
+            --char-dur: 1.18s;
+        }
+
+        .title-line--primary .title-char:nth-child(7) {
+            --char-x: -40px;
+            --char-y: -160px;
+            --char-rot: -9deg;
+            --char-delay: 0.5s;
+            --char-dur: 1.04s;
+        }
+
+        .title-line--primary .title-char:nth-child(8) {
+            --char-x: -130px;
+            --char-y: 100px;
+            --char-rot: -4deg;
+            --char-delay: 0.6s;
+            --char-dur: 0.96s;
+        }
+
+        .title-line--secondary .title-char:nth-child(1) {
+            --char-x: -140px;
+            --char-y: -120px;
+            --char-rot: -12deg;
+            --char-delay: 0.22s;
+            --char-dur: 1.08s;
+        }
+
+        .title-line--secondary .title-char:nth-child(2) {
+            --char-x: -60px;
+            --char-y: 140px;
+            --char-rot: -6deg;
+            --char-delay: 0.32s;
+            --char-dur: 0.98s;
+        }
+
+        .title-line--secondary .title-char:nth-child(3) {
+            --char-x: 90px;
+            --char-y: -150px;
+            --char-rot: 8deg;
+            --char-delay: 0.38s;
+            --char-dur: 1.16s;
+        }
+
+        .title-line--secondary .title-char:nth-child(4) {
+            --char-x: 160px;
+            --char-y: 90px;
+            --char-rot: 14deg;
+            --char-delay: 0.46s;
+            --char-dur: 1.04s;
+        }
+
+        .title-line--secondary .title-char:nth-child(5) {
+            --char-x: -170px;
+            --char-y: 40px;
+            --char-rot: -10deg;
+            --char-delay: 0.54s;
+            --char-dur: 1.12s;
+        }
+
+        .title-line--secondary .title-char:nth-child(6) {
+            --char-x: 40px;
+            --char-y: -110px;
+            --char-rot: 6deg;
+            --char-delay: 0.62s;
+            --char-dur: 0.92s;
+        }
+
+        .title-line--secondary .title-char:nth-child(7) {
+            --char-x: 130px;
+            --char-y: 150px;
+            --char-rot: 9deg;
+            --char-delay: 0.7s;
+            --char-dur: 1.26s;
+        }
+
+        .title-line--secondary .title-char:nth-child(8) {
+            --char-x: -100px;
+            --char-y: -140px;
+            --char-rot: -14deg;
+            --char-delay: 0.78s;
+            --char-dur: 1.06s;
+        }
+
+        .title-line--secondary .title-char:nth-child(9) {
+            --char-x: 70px;
+            --char-y: 120px;
+            --char-rot: 12deg;
+            --char-delay: 0.86s;
+            --char-dur: 0.94s;
+        }
+
+        .title-line--secondary .title-char:nth-child(10) {
+            --char-x: -150px;
+            --char-y: 80px;
+            --char-rot: -6deg;
+            --char-delay: 0.94s;
+            --char-dur: 1.18s;
+        }
+
+        .logo {
+            position: relative;
+            width: clamp(92px, 15vw, 150px);
+            height: auto;
+            display: block;
+            justify-self: end;
+            align-self: start;
+            margin-top: clamp(0px, 1.6vw, 12px);
+            filter: drop-shadow(0 20px 40px rgba(143, 123, 255, 0.35));
+        }
+
+        h1 {
+            font-size: clamp(2.1rem, 4.2vw, 3.3rem);
+            color: var(--primary);
+            font-weight: 700;
+            letter-spacing: 0.015em;
+            margin-bottom: clamp(12px, 2vw, 18px);
+            text-shadow: 0 18px 40px rgba(39, 32, 83, 0.15);
+        }
+
+        .subtitle {
+            font-size: clamp(1rem, 2.2vw, 1.35rem);
+            color: var(--muted);
+            margin-bottom: clamp(18px, 3vw, 24px);
+        }
+
+        .version-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: linear-gradient(130deg, var(--accent) 0%, var(--accent-strong) 100%);
+            color: #fff;
+            padding: 8px 20px;
+            border-radius: 999px;
+            font-size: 0.92rem;
+            font-weight: 600;
+            box-shadow: 0 16px 30px -18px rgba(143, 123, 255, 0.7);
+        }
+
+        h2 {
+            color: var(--primary);
+            font-size: clamp(1.45rem, 3vw, 2rem);
+            margin-bottom: clamp(18px, 3vw, 26px);
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            position: relative;
+        }
+
+        h2::after {
+            content: "";
+            position: absolute;
+            left: 0;
+            bottom: -8px;
+            width: 80px;
+            height: 4px;
+            border-radius: 999px;
+            background: linear-gradient(90deg, var(--accent), transparent);
+            opacity: 0.55;
+        }
+
+        .quick-start {
+            padding-top: clamp(2.4rem, 5vw, 3.4rem);
+        }
+
+        .step-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: clamp(20px, 3vw, 28px);
+            margin-top: clamp(24px, 4vw, 36px);
+        }
+
+        .step-card {
+            background: linear-gradient(150deg, rgba(255, 255, 255, 0.82) 0%, rgba(230, 238, 255, 0.65) 100%);
+            padding: clamp(1.35rem, 2.5vw, 1.8rem);
+            border-radius: var(--radius-md);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            position: relative;
+            overflow: visible;
+            transition: transform var(--transition), box-shadow var(--transition);
+            isolation: isolate;
+        }
+
+        .step-card::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            background: radial-gradient(circle at 20% -10%, rgba(255, 255, 255, 0.55), transparent 55%);
+            opacity: 0;
+            transition: opacity var(--transition);
+            z-index: -1;
+        }
+
+        .step-card:hover {
+            transform: translateY(-8px);
+            box-shadow: var(--shadow-medium);
+        }
+
+        .step-card:hover::after { opacity: 1; }
+
+        .step-number {
+            position: absolute;
+            top: clamp(-14px, -2vw, -10px);
+            left: clamp(18px, 4vw, 28px);
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+            color: #fff;
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            box-shadow: 0 15px 30px -18px rgba(143, 123, 255, 0.8);
+        }
+
+        h3 {
+            color: var(--primary);
+            font-size: clamp(1.1rem, 2.2vw, 1.35rem);
+            margin-bottom: 12px;
+            margin-top: 12px;
+        }
+
+        p { color: var(--muted); }
+
+        ol {
+            padding-left: 1.45rem;
+            color: var(--muted);
+            display: grid;
+            gap: 0.5rem;
+        }
+
+        ul {
+            padding-left: 1.45rem;
+            color: var(--muted);
+            display: grid;
+            gap: 0.45rem;
+        }
+
+        li { line-height: 1.7; }
+
+        code {
+            background: rgba(143, 123, 255, 0.18);
+            color: var(--primary);
+            padding: 3px 10px;
+            border-radius: 999px;
+            font-family: "Fira Code", "Courier New", Consolas, monospace;
+            font-size: 0.92rem;
+        }
+
+        .recommend-section {
+            display: flex;
+            flex-direction: column;
+            gap: clamp(24px, 4vw, 32px);
+        }
+
+        .recommend-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: clamp(20px, 3.5vw, 32px);
+        }
+
+        .recommend-card {
+            text-align: center;
+            padding: clamp(1.4rem, 2.8vw, 1.9rem);
+            border-radius: var(--radius-md);
+            background: rgba(255, 255, 255, 0.55);
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            box-shadow: var(--shadow-light);
+            transition: transform var(--transition), box-shadow var(--transition);
+            backdrop-filter: blur(14px);
+        }
+
+        .recommend-card:hover {
+            transform: translateY(-10px);
+            box-shadow: var(--shadow-medium);
+        }
+
+        .recommend-icon {
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            width: clamp(72px, 10vw, 96px);
+            height: clamp(72px, 10vw, 96px);
+            margin: 0 auto 20px;
+            border-radius: 50%;
+            background:
+                radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.8), transparent 65%),
+                linear-gradient(135deg, rgba(255, 255, 255, 0.45), rgba(235, 242, 255, 0.75));
+            border: 1px solid rgba(255, 255, 255, 0.55);
+            transition: transform var(--transition), box-shadow var(--transition);
+        }
+
+        .recommend-card:hover .recommend-icon {
+            transform: scale(1.07) translateY(-4px);
+            box-shadow: 0 18px 40px -24px rgba(143, 123, 255, 0.85);
+        }
+
+        .recommend-card h3 {
+            color: var(--primary);
+            font-size: clamp(1.05rem, 2vw, 1.2rem);
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        .recommend-card p {
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+
+        .tab-container { padding: clamp(1.6rem, 3.4vw, 2.6rem); }
+
+        .tab-nav {
+            display: flex;
+            flex-wrap: wrap;
+            gap: clamp(8px, 1.6vw, 14px);
+            background: transparent;
+            border: none;
+            margin-bottom: clamp(20px, 3vw, 28px);
+        }
+
+        .tab-button {
+            flex: 1 1 160px;
+            padding: 14px 18px;
+            background: rgba(255, 255, 255, 0.45);
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, 0.55);
+            color: var(--muted);
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform var(--transition), box-shadow var(--transition), background var(--transition), color var(--transition);
+            position: relative;
+            backdrop-filter: blur(14px);
+        }
+
+        .tab-button:hover {
+            transform: translateY(-3px);
+            box-shadow: var(--shadow-light);
+            color: var(--primary);
+        }
+
+        .tab-button.active {
+            color: #fff;
+            background: linear-gradient(120deg, var(--accent) 0%, var(--accent-strong) 100%);
+            box-shadow: var(--shadow-light);
+        }
+
+        .tab-button.active::after {
+            content: "";
+            position: absolute;
+            inset: -2px;
+            border-radius: inherit;
+            padding: 2px;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), transparent);
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+                    mask-composite: exclude;
+        }
+
+        .tab-content {
+            display: none;
+            background: rgba(255, 255, 255, 0.55);
+            border-radius: var(--radius-md);
+            padding: clamp(1.6rem, 3.2vw, 2.6rem);
+            border: 1px solid rgba(255, 255, 255, 0.45);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+        }
+
+        .tab-content.active { display: block; }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: clamp(16px, 3vw, 24px);
+            margin-top: clamp(20px, 3vw, 28px);
+        }
+
+        .feature-grid--export {
+            grid-template-columns: repeat(2, minmax(220px, 1fr));
+        }
+
+        @media (max-width: 720px) {
+            .feature-grid--export {
+                grid-template-columns: minmax(220px, 1fr);
+            }
+        }
+
+        .feature-card {
+            background: rgba(255, 255, 255, 0.55);
+            padding: clamp(1.2rem, 2.3vw, 1.6rem);
+            border-radius: var(--radius-md);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            box-shadow: var(--shadow-light);
+            transition: transform var(--transition), box-shadow var(--transition);
+        }
+
+        .feature-card:hover {
+            transform: translateY(-6px);
+            box-shadow: var(--shadow-medium);
+        }
+
+        .feature-card h4 {
+            color: var(--primary);
+            margin-bottom: 10px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            background: rgba(255, 255, 255, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            border-radius: var(--radius-sm);
+            overflow: hidden;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+        }
+
+        th,
+        td {
+            padding: clamp(12px, 2vw, 16px);
+            text-align: left;
+            border-bottom: 1px solid rgba(212, 220, 255, 0.45);
+        }
+
+        th {
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.75), rgba(240, 244, 255, 0.8));
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        .info-box {
+            background: linear-gradient(135deg, rgba(255, 211, 249, 0.45), rgba(232, 240, 255, 0.75));
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            border-left: 4px solid var(--accent);
+            padding: clamp(1.2rem, 2.4vw, 1.6rem);
+            border-radius: var(--radius-md);
+            margin: clamp(1.4rem, 3.5vw, 2rem) 0;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+        }
+
+        .warning-box {
+            background: linear-gradient(135deg, rgba(255, 238, 197, 0.8), rgba(255, 250, 232, 0.95));
+            border-left: 4px solid #ffc95b;
+            padding: clamp(1.2rem, 2.4vw, 1.6rem);
+            border-radius: var(--radius-md);
+            margin: clamp(1.4rem, 3.5vw, 2rem) 0;
+            color: var(--text);
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: clamp(24px, 4vw, 36px);
+        }
+
+        .github-links {
+            display: flex;
+            justify-content: center;
+            gap: clamp(16px, 3vw, 24px);
+            margin: clamp(24px, 4vw, 32px) 0;
+            flex-wrap: wrap;
+        }
+
+        .github-button {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            background: linear-gradient(120deg, var(--primary) 0%, rgba(33, 37, 92, 0.9) 100%);
+            color: #fff;
+            padding: 12px 26px;
+            border-radius: 999px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: transform var(--transition), box-shadow var(--transition);
+            box-shadow: 0 18px 35px -24px rgba(33, 37, 92, 0.9);
+        }
+
+        .github-button:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 22px 40px -22px rgba(143, 123, 255, 0.75);
+            background: linear-gradient(120deg, var(--accent-strong) 0%, var(--accent) 100%);
+        }
+
+        button:focus-visible,
+        a:focus-visible {
+            outline: 3px solid rgba(143, 123, 255, 0.6);
+            outline-offset: 3px;
+        }
+
+        ::selection {
+            background: rgba(255, 122, 223, 0.25);
+            color: var(--primary);
+        }
+
+        @keyframes titleCharEnter {
+            0% {
+                opacity: 0;
+                transform: translate3d(var(--char-x, 0px), var(--char-y, 0px), 0) scale(0.78) rotate(calc(var(--char-rot, 0deg) * 1.2));
+                filter: blur(6px);
+            }
+            62% {
+                opacity: 1;
+                transform: translate3d(calc(var(--char-x, 0px) * -0.12), calc(var(--char-y, 0px) * -0.12), 0) scale(1.08) rotate(calc(var(--char-rot, 0deg) * -0.18));
+                filter: blur(0px);
+            }
+            78% {
+                opacity: 1;
+                transform: translate3d(calc(var(--char-x, 0px) * 0.06), calc(var(--char-y, 0px) * 0.06), 0) scale(0.98) rotate(calc(var(--char-rot, 0deg) * 0.08));
+            }
+            100% {
+                opacity: 1;
+                transform: translate3d(0, 0, 0) scale(1) rotate(0deg);
+                filter: blur(0px);
+            }
+        }
+
+        @keyframes driftOrbA {
+            0% { transform: translate3d(-8%, -6%, 0) scale(0.96); }
+            50% { transform: translate3d(4%, 2%, 0) scale(1.02); }
+            100% { transform: translate3d(12%, 10%, 0) scale(1.08); }
+        }
+
+        @keyframes driftOrbB {
+            0% { transform: translate3d(6%, 8%, 0) scale(1.04); }
+            50% { transform: translate3d(-4%, -2%, 0) scale(0.98); }
+            100% { transform: translate3d(-10%, -12%, 0) scale(1.05); }
+        }
+
+        @keyframes ribbonFlow {
+            0% { transform: translate3d(-50%, -6%, 0) rotate(-6deg) scale(0.94); }
+            50% { transform: translate3d(-48%, 0, 0) rotate(0deg) scale(1); }
+            100% { transform: translate3d(-46%, 6%, 0) rotate(6deg) scale(1.06); }
+        }
+
+        @media (max-width: 960px) {
+            body { padding: clamp(24px, 6vw, 48px) 0; }
+            .header { padding-top: clamp(2.4rem, 6vw, 3rem); }
+            .header-layout { grid-template-columns: 1fr; }
+            .logo {
+                margin: clamp(12px, 5vw, 28px) auto 0;
+                justify-self: center;
+                align-self: center;
+            }
+            .header-text { max-width: 100%; }
+            .header::before { opacity: 0.55; }
+        }
+
+        @media (max-width: 720px) {
+            body::before,
+            body::after { opacity: 0.55; }
+            html::before { opacity: 0.38; }
+            .container { gap: 18px; }
+            h1 { font-size: clamp(1.9rem, 9vw, 2.4rem); }
+            .subtitle { font-size: 1rem; }
+            .tab-nav { gap: 8px; }
+            .tab-button { flex: 1 1 100%; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                transition-duration: 1ms !important;
+                animation-duration: 1ms !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- ヘッダー -->
+        <div class="header">
+            <div class="header-layout">
+                <div class="header-text">
+                    <h1 class="header-title">
+                        <span class="title-line title-line--primary">
+                            <span class="title-char">D</span>
+                            <span class="title-char">X</span>
+                            <span class="title-char">F</span>
+                            <span class="title-char">測</span>
+                            <span class="title-char">定</span>
+                            <span class="title-char">ツ</span>
+                            <span class="title-char">ー</span>
+                            <span class="title-char">ル</span>
+                        </span>
+                        <span class="title-line title-line--secondary">
+                            <span class="title-char">ス</span>
+                            <span class="title-char">タ</span>
+                            <span class="title-char">ー</span>
+                            <span class="title-char">ト</span>
+                            <span class="title-char">ア</span>
+                            <span class="title-char">ッ</span>
+                            <span class="title-char">プ</span>
+                            <span class="title-char">ガ</span>
+                            <span class="title-char">イ</span>
+                            <span class="title-char">ド</span>
+                        </span>
+                    </h1>
+                    <p class="subtitle">アパレルCAD用 寸法測定スタンドアロンツール 完全マニュアル</p>
+                    <span class="version-badge">バージョン v41 | 2025年9月</span>
+                </div>
+                <img src="assets/ICON_wory-bonbon.png" alt="Logo" class="logo">
+            </div>
+        </div>
+
+        <!-- クイックスタート -->
+        <div class="quick-start">
+            <h2>🚀 3分で始める</h2>
+            <div class="step-container">
+                <div class="step-card">
+                    <div class="step-number">1</div>
+                    <h3>ダウンロード</h3>
+                    <ol style="padding-left: 20px;">
+                        <li>GitHubリリースページから最新版（0922-41）をダウンロード</li>
+                        <li><code>0922-41dxf-measure-standalone.html</code> を保存</li>
+                        <li>デスクトップ等のアクセスしやすい場所に配置</li>
+                    </ol>
+                </div>
+                
+                <div class="step-card">
+                    <div class="step-number">2</div>
+                    <h3>起動</h3>
+                    <ol style="padding-left: 20px;">
+                        <li>HTMLファイルをダブルクリック</li>
+                        <li>ブラウザが自動的に起動</li>
+                        <li>測定ツールの画面が表示</li>
+                    </ol>
+                </div>
+                
+                <div class="step-card">
+                    <div class="step-number">3</div>
+                    <h3>DXF読み込み</h3>
+                    <ol style="padding-left: 20px;">
+                        <li>ファイルをブラウザにドラッグ&ドロップ</li>
+                        <li>または「ファイル選択」ボタンから読み込み</li>
+                        <li>図面が自動表示される</li>
+                    </ol>
+                </div>
+            </div>
+        </div>
+
+        <!-- こんな方におすすめ -->
+        <div class="recommend-section">
+            <h2 style="text-align: center; color: var(--accent); margin-bottom: 8px;">
+                <span style="font-size: 1.5em;">🎯</span> こんな方におすすめ
+            </h2>
+            
+            <div class="recommend-grid">
+                <div class="recommend-card">
+                    <div class="recommend-icon">
+                        <svg width="60" height="60" viewBox="0 0 60 60" fill="none">
+                            <rect x="10" y="15" width="40" height="30" rx="2" stroke="#002159" stroke-width="2"/>
+                            <path d="M20 15 L20 5 Q20 3 22 3 L38 3 Q40 3 40 5 L40 15" stroke="#002159" stroke-width="2"/>
+                            <circle cx="30" cy="30" r="8" fill="#f16f8b" opacity="0.3"/>
+                            <path d="M30 26 L30 34 M26 30 L34 30" stroke="#f16f8b" stroke-width="2"/>
+                        </svg>
+                    </div>
+                    <h3>アパレル企業</h3>
+                    <p>高額なCADソフトなしで寸法測定が可能</p>
+                </div>
+                
+                <div class="recommend-card">
+                    <div class="recommend-icon">
+                        <svg width="60" height="60" viewBox="0 0 60 60" fill="none">
+                            <path d="M10 25 Q10 20 15 20 L45 20 Q50 20 50 25 L50 40 L10 40 Z" stroke="#002159" stroke-width="2"/>
+                            <path d="M5 40 L55 40 L50 50 L10 50 Z" stroke="#002159" stroke-width="2"/>
+                            <circle cx="20" cy="30" r="3" fill="#f16f8b"/>
+                            <circle cx="30" cy="30" r="3" fill="#f16f8b"/>
+                            <circle cx="40" cy="30" r="3" fill="#f16f8b"/>
+                        </svg>
+                    </div>
+                    <h3>パタンナー</h3>
+                    <p>フリーランスでも本格的な測定ツールを</p>
+                </div>
+                
+                <div class="recommend-card">
+                    <div class="recommend-icon">
+                        <svg width="60" height="60" viewBox="0 0 60 60" fill="none">
+                            <path d="M30 10 L45 20 L45 35 L30 45 L15 35 L15 20 Z" stroke="#002159" stroke-width="2" fill="#ffb8cd" opacity="0.3"/>
+                            <rect x="25" y="8" width="10" height="4" fill="#002159"/>
+                            <circle cx="30" cy="28" r="8" stroke="#f16f8b" stroke-width="2" fill="white"/>
+                        </svg>
+                    </div>
+                    <h3>学生・教育機関</h3>
+                    <p>学習用に最適な無料ツール</p>
+                </div>
+                
+                <div class="recommend-card">
+                    <div class="recommend-icon">
+                        <svg width="60" height="60" viewBox="0 0 60 60" fill="none">
+                            <rect x="8" y="20" width="15" height="25" fill="#ffb8cd" opacity="0.5"/>
+                            <rect x="27" y="15" width="15" height="30" fill="#f16f8b" opacity="0.5"/>
+                            <rect x="46" y="10" width="15" height="35" fill="#002159" opacity="0.8"/>
+                            <path d="M8 50 L52 50" stroke="#526076" stroke-width="2"/>
+                        </svg>
+                    </div>
+                    <h3>生産管理</h3>
+                    <p>現場での寸法確認作業を効率化</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- タブコンテンツ -->
+        <div class="tab-container">
+            <div class="tab-nav">
+                <button class="tab-button active" onclick="showTab('basic')">基本操作</button>
+                <button class="tab-button" onclick="showTab('advanced')">詳細機能</button>
+                <button class="tab-button" onclick="showTab('tips')">活用のコツ</button>
+                <button class="tab-button" onclick="showTab('export')">書き出し機能</button>
+                <button class="tab-button" onclick="showTab('security')">セキュリティ</button>
+            </div>
+
+            <!-- タブ1: 基本操作 -->
+            <div id="basic" class="tab-content active">
+                <h2>基本操作</h2>
+                
+                <h3>測定の基本</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>操作</th>
+                            <th>方法</th>
+                            <th>用途</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>沿い距離測定</strong></td>
+                            <td>線分をクリック → 測定開始</td>
+                            <td>袖ぐり、衿ぐりなどカーブの実寸</td>
+                        </tr>
+                        <tr>
+                            <td><strong>直線距離測定</strong></td>
+                            <td>A点クリック → B点クリック</td>
+                            <td>2点間の直線距離</td>
+                        </tr>
+                        <tr>
+                            <td><strong>幅/丈測定</strong></td>
+                            <td>幅/丈ボタン → 測定</td>
+                            <td>水平・垂直方向の寸法</td>
+                        </tr>
+                        <tr>
+                            <td><strong>測定キャンセル</strong></td>
+                            <td>ESCキー</td>
+                            <td>測定中の操作を中止</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p style="margin-top: 16px; font-size: 0.95rem; color: var(--muted);">
+                    ※ DXF の作りによっては Shift+クリック の水平/垂直拘束が効かない場合があります。その際は幅/丈の数値を目安に確認してください。
+                </p>
+
+                <h3 style="margin-top: 24px;">測定値の見方</h3>
+                <div class="info-box">
+                    <p><strong>① 沿い距離（青太線）</strong><br>
+                    カーブに沿った実際の長さ。袖ぐりや衿ぐりの実寸測定に使用。</p>
+                    
+                    <p style="margin-top: 12px;"><strong>② 直線距離（灰点線）</strong><br>
+                    A点からB点への直線距離。</p>
+                    
+                    <p style="margin-top: 12px;"><strong>③ 幅/丈（橙L字）</strong><br>
+                    水平方向の幅と垂直方向の丈。画面基準またはDXF座標基準で切替可能。</p>
+                </div>
+            </div>
+
+            <!-- タブ2: 詳細機能 -->
+            <div id="advanced" class="tab-content">
+                <h2>詳細機能</h2>
+
+                <h3>パーツ管理</h3>
+                <ul>
+                    <li>ブロック（パーツ）ごとの表示切替</li>
+                    <li>パーツ名の変更（ダブルクリックで編集）</li>
+                    <li>ヘッダーの「↺パーツ / ↻パーツ / パーツ0°」で90度単位の回転</li>
+                    <li>設定は図面ごとに自動保存</li>
+                </ul>
+
+                <h3 style="margin-top: 24px;">測定ログ</h3>
+                <ul>
+                    <li>全測定履歴を自動記録</li>
+                    <li>部位メモの追加（股ぐり、肩線など）</li>
+                    <li>CSV形式での書き出し</li>
+                    <li>ドック表示/フローティング表示の切替（ログ▲/ログPOPボタン）</li>
+                </ul>
+
+                <h3 style="margin-top: 24px;">便利な機能</h3>
+                <div class="feature-grid">
+                    <div class="feature-card">
+                        <h4>🔒 同一ポリラインロック</h4>
+                        <p>測定したい線分だけを選択可能。重なった線がある場合に便利。</p>
+                    </div>
+                    <div class="feature-card">
+                        <h4>🔄 全体回転 &amp; フィット</h4>
+                        <p>ヘッダーの「↺全体 / ↻全体 / 全体0°」で向きを調整し、「Fit全体」「Fitロック」で素早く整列できます。</p>
+                    </div>
+                    <div class="feature-card">
+                        <h4>⌨️ ショートカット</h4>
+                        <p>Shift+クリックで水平/垂直制約、ESCでキャンセルなど。</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- タブ3: 活用のコツ -->
+            <div id="tips" class="tab-content">
+                <h2>活用のコツ</h2>
+
+                <h3>アパレル現場での使い方</h3>
+                <div class="info-box">
+                    <p><strong>🎯 袖ぐり・衿ぐり測定</strong><br>
+                    沿い距離測定でカーブの実寸を正確に測定。パターンメイキングの必須機能。</p>
+                    
+                    <p style="margin-top: 12px;"><strong>📏 着丈・身幅測定</strong><br>
+                    幅/丈測定で基本寸法を素早く確認。仕様書作成に便利。</p>
+                    
+                    <p style="margin-top: 12px;"><strong>📝 部位メモ活用</strong><br>
+                    測定ログに「前股ぐり」「後肩線」などメモを追加して管理。</p>
+                </div>
+
+                <h3 style="margin-top: 24px;">効率的な作業フロー</h3>
+                <ol>
+                    <li><strong>パーツ名設定</strong>：最初に前身頃、後身頃などパーツ名を設定</li>
+                    <li><strong>ロック機能活用</strong>：同一ポリラインロックONで測定対象を限定</li>
+                    <li><strong>測定実施</strong>：必要な箇所を順次測定</li>
+                    <li><strong>ログ確認</strong>：測定ログで数値確認、部位メモ追加</li>
+                    <li><strong>CSV出力</strong>：Excel等で活用</li>
+                </ol>
+
+                <div class="warning-box">
+                    <strong>💡 おすすめ設定</strong><br>
+                    「同一ポリラインにロック」をONにすると、測定したい線だけを選択できます。<br>
+                    重なった線がある場合に特に便利です！
+                </div>
+            </div>
+
+            <!-- タブ4: 書き出し機能 -->
+            <div id="export" class="tab-content">
+                <h2>書き出し機能</h2>
+
+                <div class="feature-grid feature-grid--export">
+                    <div class="feature-card">
+                        <h4>📊 CSV出力</h4>
+                        <ul style="padding-left: 20px;">
+                            <li><strong>用途:</strong> Excel / Googleスプレッドシートで測定ログ管理</li>
+                            <li><strong>対応環境:</strong> Windows / macOS の Excel 2019・2021・Microsoft 365、Googleスプレッドシート</li>
+                            <li><strong>ポイント:</strong> BOM付きUTF-8で文字化けなし。目盛り設定は不要です。</li>
+                        </ul>
+                    </div>
+                    <div class="feature-card">
+                        <h4>🎨 SVG出力</h4>
+                        <ul style="padding-left: 20px;">
+                            <li><strong>用途:</strong> Illustratorでパターン修正・注釈を加えたいとき</li>
+                            <li><strong>対応環境:</strong> Windows / macOS の Illustrator 2021 以降（Creative Cloud）</li>
+                            <li><strong>ポイント:</strong> 目盛りONなら20mm余白付き実寸ガイド、OFFでクリーンなアートボード。</li>
+                        </ul>
+                    </div>
+                    <div class="feature-card">
+                        <h4>📄 PDF出力</h4>
+                        <ul style="padding-left: 20px;">
+                            <li><strong>用途:</strong> 実寸印刷で検品・寸法チェック</li>
+                            <li><strong>対応環境:</strong> Windows / macOS の Adobe Reader・Edge・Chrome 印刷ダイアログ</li>
+                            <li><strong>手順:</strong> 目盛りON推奨。印刷時は「実際のサイズ(100%)」「用紙に合わせない」を選択。</li>
+                        </ul>
+                    </div>
+                    <div class="feature-card">
+                        <h4>🖼️ PNG出力</h4>
+                        <ul style="padding-left: 20px;">
+                            <li><strong>用途:</strong> PowerPoint / Keynote / Googleスライド等の資料貼付</li>
+                            <li><strong>対応環境:</strong> Windows / macOS の Office 2019・2021・Microsoft 365、Google Workspace</li>
+                            <li><strong>ポイント:</strong> 目盛りOFFで資料に馴染む。正確な寸法確認はPDFを併用。</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <h3 style="margin-top: 24px;">単位スケール設定</h3>
+                <div class="warning-box" style="margin-bottom: 20px;">
+                    <strong>⚠️ 書き出し時の注意事項</strong><br>
+                    • 画面回転は表示のみで、書き出し（SVG/PNG/PDF）には反映されません<br>
+                    • 大規模なファイルでは書き出しに時間がかかる場合があります<br>
+                    • ブラウザによって書き出し品質が異なる場合があります
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>DXFの単位</th>
+                            <th>出力したい単位</th>
+                            <th>設定値</th>
+                            <th>計算式</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>mm</td>
+                            <td>mm</td>
+                            <td><strong>1</strong></td>
+                            <td>等倍</td>
+                        </tr>
+                        <tr>
+                            <td>mm</td>
+                            <td>cm</td>
+                            <td><strong>0.1</strong></td>
+                            <td>mm × 0.1 = cm</td>
+                        </tr>
+                        <tr>
+                            <td>cm</td>
+                            <td>mm</td>
+                            <td><strong>10</strong></td>
+                            <td>cm × 10 = mm</td>
+                        </tr>
+                        <tr>
+                            <td>inch</td>
+                            <td>mm</td>
+                            <td><strong>25.4</strong></td>
+                            <td>inch × 25.4 = mm</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- タブ5: セキュリティ -->
+            <div id="security" class="tab-content">
+                <h2>セキュリティについて</h2>
+
+                <h3>データの取り扱い</h3>
+                <div class="info-box">
+                    <p><strong>📍 ローカル完結型の動作</strong><br>
+                    このツールはお使いのブラウザ内だけで動作します。インターネット接続は不要で、外部サーバーとの通信は行いません。</p>
+                    
+                    <p style="margin-top: 12px;"><strong>🔒 データの保存場所</strong><br>
+                    図面データや測定結果は、ブラウザのローカルストレージ（お使いのPC内）にのみ保存されます。クラウドへのアップロードは行われません。</p>
+                    
+                    <p style="margin-top: 12px;"><strong>📂 ファイルの処理</strong><br>
+                    DXFファイルはブラウザのメモリ上で処理され、処理後は自動的に破棄されます。</p>
+                </div>
+
+                <h3 style="margin-top: 24px;">企業でご利用の場合</h3>
+                <div class="info-box" style="background: linear-gradient(135deg, #f0f8ff, white);">
+                    <p><strong>🖥️ 推奨動作環境</strong><br>
+                    • ブラウザ：Chrome/Edge（推奨）、Firefox、Safari<br>
+                    • OS：Windows 10以降、macOS 10.15以降<br>
+                    • メモリ：4GB以上推奨<br>
+                    • オフライン動作：可能（初回読み込み後）</p>
+                </div>
+                <table style="margin-top: 20px;">
+                    <thead>
+                        <tr>
+                            <th>確認項目</th>
+                            <th>状況</th>
+                            <th>補足説明</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>外部通信</strong></td>
+                            <td>なし</td>
+                            <td>ネットワークを遮断した環境でも動作可能です</td>
+                        </tr>
+                        <tr>
+                            <td><strong>インストール</strong></td>
+                            <td>不要</td>
+                            <td>HTMLファイル1個のみ、レジストリ変更なし</td>
+                        </tr>
+                        <tr>
+                            <td><strong>管理者権限</strong></td>
+                            <td>不要</td>
+                            <td>一般ユーザー権限で実行可能</td>
+                        </tr>
+                        <tr>
+                            <td><strong>ソースコード</strong></td>
+                            <td>公開</td>
+                            <td>GitHubで全コードを確認できます</td>
+                        </tr>
+                        <tr>
+                            <td><strong>ライセンス</strong></td>
+                            <td>Apache 2.0</td>
+                            <td>商用利用・改変・再配布が可能</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3 style="margin-top: 24px;">よくあるご質問</h3>
+                <div class="feature-grid">
+                    <div class="feature-card">
+                        <h4>❓ どのCADのDXFに対応？</h4>
+                        <p>一般的なアパレルCADが出力するDXF形式に対応。パターンのカーブはポリラインとして処理され、袖ぐりや衿ぐりの沿い距離を正確に測定できます。</p>
+                    </div>
+                    <div class="feature-card">
+                        <h4>❓ カーブの測定はできる？</h4>
+                        <p>はい、ポリライン形式のカーブは沿い距離測定で実寸を計測可能。ただし円弧（ARC）やスプライン（SPLINE）は直線近似で表示される場合があります。</p>
+                    </div>
+                    <div class="feature-card">
+                        <h4>❓ 機密図面を扱っても大丈夫？</h4>
+                        <p>図面データは外部に送信されることはありません。ただし、お使いのPCのセキュリティ状態もご確認ください。</p>
+                    </div>
+                    <div class="feature-card">
+                        <h4>❓ IT部門の承認は必要？</h4>
+                        <p>社内規定によって異なります。HTMLファイルの実行に関する規定をご確認ください。</p>
+                    </div>
+                    <div class="feature-card">
+                        <h4>❓ セキュリティリスクは？</h4>
+                        <p>公式リポジトリから入手すれば、一般的なセキュリティリスクは低いです。改変されたファイルにはご注意ください。</p>
+                    </div>
+                    <div class="feature-card">
+                        <h4>❓ データはどこに保存される？</h4>
+                        <p>設定や測定ログはブラウザのローカルストレージ（お使いのPC内）に保存。容量制限により古いデータが削除される場合があります。</p>
+                    </div>
+                </div>
+
+                <div class="warning-box" style="margin-top: 24px;">
+                    <strong>💡 IT担当者の方へ</strong><br>
+                    このツールはJavaScriptで記述されたクライアントサイドアプリケーションです。<br>
+                    以下の技術仕様をご確認いただけます：<br>
+                    • 使用ライブラリ：DXFパーサー（ローカル処理用）<br>
+                    • 外部API：使用していません<br>
+                    • Cookie：使用していません<br>
+                    • WebSocket：使用していません<br>
+                    詳細はGitHubのソースコードをご確認ください。
+                </div>
+
+                <h3 style="margin-top: 24px;">透明性への取り組み</h3>
+                <ul>
+                    <li><strong>オープンソース</strong>：全てのコードをGitHubで公開しています</li>
+                    <li><strong>コミュニティ開発</strong>：修正や改善の履歴が全て記録されています</li>
+                    <li><strong>Issue管理</strong>：問題や要望は公開で記録していますが、対応や回答には時間がかかる場合があります</li>
+                    <li><strong>定期更新</strong>：セキュリティや機能の改善を継続的に実施</li>
+                </ul>
+
+                <div class="info-box" style="margin-top: 24px; background: linear-gradient(135deg, #e8f5e9, white);">
+                    <p><strong>🌱 開発者より</strong><br>
+                    私自身、アパレル業界で働くデザイナーです。現場の不便を解決したくて作りました。<br>
+                    安心してお使いいただけるよう、できる限り透明性を保って開発しています。<br>
+                    要望やバグ報告についてはすぐに対応できない場合があります。デザイナーとして初期アイデアやプロトタイプの提供を重視しており、修正対応には限界がありますことをご了承ください。</p>
+                </div>
+
+                <h3 style="margin-top: 24px;">既知の制約事項</h3>
+                <div class="warning-box">
+                    <strong>📌 現バージョンの制約</strong><br>
+                    • 円弧・スプライン曲線は直線近似で表示されます<br>
+                    • 画面回転は表示のみで、書き出しには反映されません<br>
+                    • 大規模ファイル（10MB以上）では動作が重くなる場合があります<br>
+                    • ローカルストレージの容量制限により、保存データが削除される可能性があります<br>
+                    詳細な対応状況は、GitHubのREADMEをご確認ください。
+                </div>
+            </div>
+        </div>
+
+        <!-- フッター -->
+        <div class="footer">
+            <h2 style="font-size: 1.5rem; margin-bottom: 16px;">
+                🌟 みんなのDXF - オープンソースプロジェクト
+            </h2>
+            <p style="color: var(--gray); margin-bottom: 24px;">
+                このツールは完全無料のオープンソースソフトウェアです。<br>
+                アパレル業界の効率化を支援するため、コミュニティで開発・維持されています。
+            </p>
+            
+            <div class="github-links">
+                <a href="https://github.com/wory-bonbon/minna-no-dxf" class="github-button">
+                    📦 GitHub リポジトリ
+                </a>
+                <a href="https://github.com/wory-bonbon/minna-no-dxf/releases" class="github-button">
+                    📥 最新版ダウンロード
+                </a>
+                <a href="https://github.com/wory-bonbon/minna-no-dxf/issues" class="github-button">
+                    💬 要望・バグ報告
+                </a>
+            </div>
+            
+            <p style="margin-top: 32px; font-size: 0.875rem; color: var(--gray);">
+                DXF測定ツール v41 - Apache 2.0 License<br>
+                © 2025 アパレル業界の効率化を支援するオープンソースプロジェクト
+            </p>
+        </div>
+    </div>
+
+    <script>
+        function showTab(tabName) {
+            // すべてのタブコンテンツを非表示
+            const contents = document.querySelectorAll('.tab-content');
+            contents.forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            // すべてのタブボタンの選択状態を解除
+            const buttons = document.querySelectorAll('.tab-button');
+            buttons.forEach(button => {
+                button.classList.remove('active');
+            });
+            
+            // 選択されたタブを表示
+            document.getElementById(tabName).classList.add('active');
+            
+            // 選択されたボタンをアクティブに
+            event.target.classList.add('active');
+        }
+    </script>
+</body>
+</html>
