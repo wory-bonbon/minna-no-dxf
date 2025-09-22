@@ -10,11 +10,16 @@ DXF 計測ツール **Minna-no-DXF** のリポジトリです。以下はツー�
 
 ## ドキュメントリンク
 
-- [ユーザーガイド：基本操作](https://wory-bonbon.github.io/minna-no-dxf/dxf-measure-v41.html)
-- [ユーザーガイド：スナップ精度](https://wory-bonbon.github.io/minna-no-dxf/measure-snap-accuracy-plain-v41.html)
+- [ユーザーガイド：基本操作](https://wory-bonbon.github.io/minna-no-dxf/)  
+  ※webガイド。フッターの「最新版ダウンロード」よりシステムをダウンロード。
+- [ユーザーガイド：スナップ精度](https://wory-bonbon.github.io/minna-no-dxf/measure-guide.html)
+  ※かんたんスタートアップwebガイド。ブレない計測のコツ。
 - [開発者向け機能概要](docs/DEVELOPER_GUIDE.md)
 
-上記リンクからユーザー向けガイドや開発者向け機能概要にアクセスできます。
+- [システムお試し起動（v41）](https://wory-bonbon.github.io/minna-no-dxf/dxf-measure-v41.html)  
+  ※今直ぐ起動してお試し。ローカルにダウンロードしても動作確認ができます。  
+
+上記リンクから活用テストやユーザー向けガイド、開発者向け機能概要にアクセス。
 ---
 
 ## 🚀 概要
@@ -170,6 +175,20 @@ DXF 計測ツール **Minna-no-DXF** のリポジトリです。以下はツー�
 - Canvas描画はピクセルスナップで滲みを軽減し、ロック時のポリラインを強調
 - Ray × segment交差判定を実装し、Shift拘束時の交点を厳密に算出
 - Fit処理では余白40pxを確保し、回転後のバウンディングからスケール・平行移動を導出
+
+---
+
+## 免責事項とお願い
+
+本ツールはアパレル業務の効率化を目的としたオープンソースソフトウェアとして公開しています。
+開発者にとって初めてのOSS開発であり、十分に検証は行いましたが不具合が残っている可能性があります。
+ご利用は自己責任でお願いします。お気付きの点や改善提案があればお気軽に Issuesまでご報告ください。
+
+---
+
+## ライセンス
+
+このプロジェクトは Apache License 2.0 のもとで公開されています。詳細は [LICENSE](LICENSE) ファイルをご覧ください。
 
 ---
 
