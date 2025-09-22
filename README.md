@@ -2,7 +2,7 @@
 
 DXF 計測ツール **Minna-no-DXF** のリポジトリです。以下はツールの UI の概要です。
 
-![DXF Measure UI](images/dxf_measure-ui.png)
+![DXF Measure UI](assets/DXF_Measure_UI.png)
 
 ## ドキュメントリンク
 
