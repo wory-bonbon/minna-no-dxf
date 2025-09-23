@@ -122,6 +122,47 @@
 
         a:hover { color: var(--accent); }
 
+        /*
+         * Custom styling for the 操作動画セクション.
+         * This mirrors the card-like appearance used throughout the guide
+         * while centering its contents and applying a gentle hover effect
+         * to the thumbnail. Colours and radii reference the existing CSS
+         * variables to maintain brand consistency.
+         */
+        .video-section {
+            background: var(--card-bg);
+            border-radius: var(--radius-lg);
+            padding: clamp(1.8rem, 4vw, 3.2rem);
+            box-shadow: var(--shadow-soft);
+            border: 1px solid var(--card-border);
+            position: relative;
+            overflow: hidden;
+            backdrop-filter: blur(18px);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: clamp(14px, 2.4vw, 20px);
+        }
+
+        .video-section h2 {
+            text-align: center;
+            color: var(--accent);
+            margin-bottom: clamp(8px, 1vw, 12px);
+        }
+
+        .video-section img {
+            max-width: 100%;
+            height: auto;
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow-medium);
+            cursor: pointer;
+            transition: transform var(--transition);
+        }
+
+        .video-section img:hover {
+            transform: scale(1.04);
+        }
+
         .header,
         .quick-start,
         .recommend-section,
@@ -883,6 +924,15 @@
                     </ol>
                 </div>
             </div>
+        </div>
+
+        <!-- 操作動画セクション -->
+        <div class="video-section">
+            <h2><span style="font-size: 1.5em;">🎬</span> 操作動画</h2>
+            <!-- サムネイルをクリックするとYouTubeの操作動画が別タブで開きます -->
+            <a href="https://youtu.be/P2NnUaqF2Ww" target="_blank" rel="noopener noreferrer">
+                <img src="assets/thumbnail-guide.png" alt="操作動画サムネイル">
+            </a>
         </div>
 
         <!-- こんな方におすすめ -->
