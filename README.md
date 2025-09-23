@@ -8,6 +8,10 @@ DXF 計測ツール **Minna-no-DXF** のリポジトリです。以下はツー�
 
 ![Toolbar and Log Panel](assets/toolbar_and_log_panel.png)
 
+[![みんなのDXFリリース](assets/thumbnail.png)](https://youtu.be/P2NnUaqF2Ww)
+
+---
+
 ## ドキュメントリンク
 
 - [ユーザーガイド：基本操作](https://wory-bonbon.github.io/minna-no-dxf/)  
